@@ -1,14 +1,21 @@
-# FAD Downloader 0.0.1
+# FAD Downloader 0.1.0
 
-Prima versione sperimentale del progetto di Edoardo Querio Gianetto, ITS-ICT Piemonte.
-Applicazione Python per GNU/Linux, con interfaccia grafica in italiano e comandi da terminale.
-La demo funziona senza connessione e senza credenziali. L'adattatore Moodle deve ancora
-essere collaudato sulla FAD della scuola: i test sintetici non garantiscono la compatibilità
-con il tema, i plugin e le impostazioni del sito reale.
+Applicazione Python per GNU/Linux con GUI italiana e CLI condivisa. Raccoglie materiali e test già svolti della FAD in una directory consultabile offline.
 
-## Installazione su Ubuntu
+Il flusso completo è implementato e provato con dati sintetici. Dopo la correzione del redirect `testsession`, sono stati verificati login reale, lettura di 31 corsi e logout. Completezza della scansione delle attività ed esportazioni reali richiedono ancora un collaudo dedicato.
 
-Aprire il terminale in questa cartella (`app`):
+## Avvio nel repository su Windows
+
+```powershell
+& "C:/Users/edoardo.querio/Desktop/Materie/.venv/Scripts/python.exe" -m fad_downloader --demo
+```
+
+Rimuovere `--demo` per accedere alla FAD. `preview_gui.py` cattura una schermata e chiude automaticamente la finestra: non è il launcher.
+Per avviare dall'IDE aprire `run.py` e selezionare l'interprete `.venv` del repository.
+
+## Installazione Ubuntu
+
+Aprire il terminale nella cartella `app`:
 
 ```bash
 sudo apt update
@@ -19,82 +26,134 @@ python -m pip install .
 fad-downloader --demo
 ```
 
-Per l'accesso reale: `fad-downloader`. È necessario un desktop grafico per la GUI.
-Il portachiavi Secret Service deve essere disponibile e sbloccato nella sessione desktop.
-Se non è disponibile, si può accedere senza memorizzare la password.
-Non vengono accettati backend che salvano le credenziali in chiaro.
-Python minimo dichiarato: 3.10; ambiente effettivamente provato: Python 3.14 su Ubuntu WSL e Windows.
+La GUI richiede un desktop; la CLI funziona senza display. Il login usa il file `.env` e non richiede un portachiavi. Python minimo dichiarato 3.10; collaudo locale con Python 3.14.
 
-## Uso della GUI
+## Credenziali
 
-1. Inserire username e password. «Ricorda» è facoltativo; salva nel portachiavi di sistema.
-2. Premere «Scansiona FAD» per elencare corsi e attività accessibili. Leggere gli avvisi nella scheda messaggi.
-3. Scegliere la directory di lavoro; selezionare corsi, sezioni o singole attività.
-4. Impostare i nomi delle cartelle e, se necessario, associare un corso a una cartella relativa.
-5. Generare l'anteprima e controllare le destinazioni, poi avviare il download.
-6. Verificare i file e aprire l'indice locale. «Riprova falliti» prepara una nuova anteprima delle risorse da ritentare.
+Compilare `app/.env`:
 
-La scansione si avvia esplicitamente dopo il login, anche al primo utilizzo.
-I modelli disponibili sono `{course_id}`, `{course_name}` e `{section_name}`;
-le cartelle già registrate non vengono rinominate automaticamente.
-«Salva impostazioni» conserva la nomenclatura nel workspace; «Carica impostazioni» la ripristina.
-Usare una directory distinta per ciascun account e per la demo.
-Logout chiude la sessione locale; «Dimentica» rimuove la credenziale del nome utente indicato.
+```dotenv
+FAD_USERNAME='nomeutente'
+FAD_PASSWORD='password'
+```
 
-## Terminale
+Nell'installazione di sviluppo il file viene cercato accanto a `pyproject.toml`; nel pacchetto installato nella directory corrente. `--env-file /percorso/.env`, prima del sottocomando, sceglie un file esplicito. Lo stesso file viene usato sia per lettura sia per salvataggio. Le variabili d'ambiente `FAD_USERNAME`/`FAD_PASSWORD` e il portachiavi non vengono usati dal login; nessuna interpolazione `${...}`.
+
+All'avvio la GUI carica username e password dal `.env`, con password mascherata. I campi possono essere modificati; dopo un accesso riuscito le credenziali usate vengono salvate automaticamente nello stesso file e riproposte al prossimo avvio. Un login rifiutato non sovrascrive le credenziali precedenti. «Carica .env» rilegge il file senza riavvio; «Dimentica password» svuota entrambe le chiavi nel file. La demo non modifica le credenziali salvate. Il salvataggio è atomico, conserva commenti e altre impostazioni e non registra i valori nei log. Se il salvataggio fallisce, l'accesso resta valido e un messaggio segnala che le credenziali non sono state conservate.
+
+`.env` contiene la password in chiaro ed è ignorato da Git. Su Linux usare `chmod 600 .env`. Password, cookie e sesskey non vengono inseriti in cataloghi, piani o report. Non passare la password negli argomenti del comando.
+
+## Interfaccia e flusso completo
+
+1. Accedere: parte la scansione automatica dei corsi accessibili. Leggere gli avvisi.
+2. Scegliere un workspace distinto per ogni account e per la demo.
+3. Cercare e selezionare corsi, sezioni, materiali o singoli tentativi completati.
+4. Configurare nomenclatura e associazioni corso/cartella.
+5. Generare l'anteprima, controllare le destinazioni e scaricare.
+6. Consultare il report, verificare i file e aprire l'indice raggruppato per corso.
+
+«Scansiona FAD» aggiorna il catalogo salvato: nuovi contenuti e metadati aggiornati sono evidenziati. Risorse non più rilevate sono segnalate senza cancellare file; uno scan parziale non prova una rimozione. Catalogo, report e indice salvati sono apribili senza login.
+Link e consegne non supportati restano visibili come attività del catalogo: il downloader
+li segnala come non supportati e non visita tali URL. La validazione dei metadati non
+amplia la policy delle richieste HTTP.
+
+Per il tema Snap, la scansione carica anche le sezioni disponibili nel menu che non
+sono presenti nell'HTML iniziale. Usa esclusivamente il frammento di lettura
+`theme_snap/section`, senza eseguire JavaScript. Le sezioni vengono conservate nel catalogo,
+anche quando sono vuote o non contengono file scaricabili. Sezioni omonime rimangono distinte.
+Con il filtro «Tutti» sono visibili anche corsi e sezioni senza risorse; i filtri materiali/test
+mostrano soltanto i gruppi corrispondenti. Se un frammento non è accessibile, la sezione
+resta visibile come «Non disponibile» e la scansione lo segnala.
+Rieseguire «Scansiona FAD» per aggiornare i cataloghi creati prima di questa correzione.
+
+Modelli: `{course_id}`, `{course_name}`, `{section_index}`, `{section_name}`, `{activity_id}`, `{activity_name}`, `{quiz_id}`, `{attempt_id}`. Ogni modello produce un solo nome; le associazioni possono contenere sottocartelle. Gli allegati preservano i percorsi dichiarati dalle API o ricavati da `mod_folder`. Percorsi già assegnati prevalgono sulle nuove regole, senza rinomine implicite.
+
+«Salva impostazioni» conserva nomenclatura e mapping nel workspace; directory, default e limiti nella configurazione globale. All'avvio le impostazioni workspace prevalgono su quelle globali. Linux: `$XDG_CONFIG_HOME/fad-downloader/settings.json`, oppure `~/.config/fad-downloader/settings.json`; Windows: `%APPDATA%/fad-downloader/settings.json`.
+
+## Interruzioni e conflitti
+
+«Annulla» conserva i file completati. Un file interrotto riparte da zero; niente HTTP Range. Il piano viene salvato prima del download; fallimenti e conflitti restano recuperabili. «Ritenta falliti» prepara una nuova anteprima; dopo un riavvio accedere allo stesso account e usare «Recupera piano».
+
+È prevista una sola riautenticazione automatica per download tramite `.env`, verificando l'identità dell'account. Senza credenziali disponibili è necessario un nuovo accesso manuale.
+
+File modificati localmente non vengono sovrascritti. «Copia conflitti» prepara destinazioni alternative e conserva la copia modificata. Gli export HTML usano generazioni: un errore conserva la precedente versione; le generazioni obsolete non vengono eliminate automaticamente.
+
+## Backup e recupero
+
+«Backup stato» conserva manifest, catalogo, impostazioni, piano e report in `.fad/backups`. Non include gli allegati: per proteggerli copiare l'intero workspace.
+
+«Ripristina backup» conserva lo stato corrente, applica un backup interno e ricrea l'indice. Può recuperare un manifest JSON corrotto; rifiuta schemi futuri e account diversi riconoscibili. Lo schema 1 della 0.0.1 resta compatibile con valori predefiniti per i nuovi campi. Nessuna conversione implicita di schemi sconosciuti.
+
+L'inventario riconosce temporanei `.part-*`; la rimozione resta manuale. Non modificare lo stato mentre l'app sta lavorando.
+
+## CLI
 
 ```bash
 fad-downloader --help
+fad-downloader scan --demo --workspace "$HOME/FAD-demo"
 fad-downloader plan --demo --workspace "$HOME/FAD-demo"
 fad-downloader download --demo --workspace "$HOME/FAD-demo"
 fad-downloader verify --workspace "$HOME/FAD-demo"
+fad-downloader catalog --workspace "$HOME/FAD-demo"
 fad-downloader report --workspace "$HOME/FAD-demo"
-fad-downloader scan --username NOMEUTENTE
-fad-downloader download --username NOMEUTENTE --course-id 123 --type materials --workspace "$HOME/FAD"
+fad-downloader backup --workspace "$HOME/FAD-demo"
+fad-downloader recovery --workspace "$HOME/FAD-demo"
+fad-downloader restore --workspace "$HOME/FAD-demo" --backup .fad/backups/NOME_BACKUP
+fad-downloader --env-file .env download --non-interactive --course-id 123 --type materials
+fad-downloader download --resume --non-interactive
+fad-downloader download --copy-conflicts --non-interactive
 ```
 
-La password viene richiesta senza eco, oppure recuperata dal portachiavi; non va passata
-come argomento. `--non-interactive` richiede una credenziale già memorizzata.
-`download --dry-run` mostra le destinazioni senza scaricare. La scansione reale richiede comunque rete e login.
-Codici di uscita: 0 riuscito, 1 errore, 2 configurazione, 3 esito parziale o problemi di verifica,
-4 autenticazione richiesta, 130 interruzione da tastiera.
+`plan` e `download --dry-run` non scrivono materiali o stato; una scansione reale richiede comunque rete. `scan` salva il catalogo. `--type`: all/materials/quizzes. `--workspace` prevale sulla directory globale; default `~/FAD` o `~/FAD-demo`. `--file-limit` e `--run-limit`, prima del sottocomando, regolano i byte per la CLI. In GUI usare «Limiti».
 
-## Cosa comprende
+Codici: 0 riuscito, 1 errore, 2 configurazione, 3 esito parziale/problemi di verifica, 4 autenticazione richiesta, 130 interruzione da tastiera.
 
-- Login Moodle, salvataggio facoltativo delle credenziali, scansione corsi e sezioni.
-- Ricerca, selezione, anteprima, nomenclatura personalizzabile e associazione corso/cartella.
-- Download in streaming degli allegati individuati; esportazione HTML locale di pagine e libri.
-- Esportazione dei tentativi quiz completati e revisionabili, limitata ai tipi di domanda riconosciuti.
-- Manifest JSON, hash SHA-256, report, indice locale e verifica indipendente dei file.
-- Worker per mantenere reattiva la GUI, annullamento e possibilità di riprovare gli errori.
-- Scritture atomiche, lock del workspace e protezione dei file modificati dall'utente.
+## Sicurezza, limiti e ambito
 
-## Limiti della 0.0.1
+Origine HTTPS fissa, TLS verificato, redirect controllati, DNS privato rifiutato. Endpoint di lettura consentiti; login e logout espliciti. Nessun avvio/invio di quiz o consegne. HTML senza script, form attivi, campi nascosti e caricamenti remoti. Tipi di domanda non riconosciuti sono rifiutati; risposte, voti e feedback non visibili non vengono ricostruiti.
 
-Non sono ancora verificati login reale, SSO/MFA, portachiavi su desktop Linux e completezza
-della scansione sul Moodle della scuola. Il fallback HTML segnala la possibile incompletezza.
-Non vengono svolti né inviati test; si esporta solo quanto già disponibile in revisione.
-Tipi di domanda non riconosciuti vengono rifiutati, senza dichiarare completo un export parziale.
-Non sono inclusi SCORM, video esterni, contenuti dinamici, esportazione PDF dei quiz,
-replica fedele delle sottocartelle Moodle, migrazioni di vecchi manifest o pulizia delle generazioni obsolete.
-La riscan­sione è manuale; il catalogo non è ancora persistito. La configurazione è locale al workspace.
-Un file interrotto riparte dall'inizio; i file completati restano registrati. Non è previsto HTTP Range.
-Gli export HTML creano nuove generazioni anche se il contenuto non cambia.
-La scadenza della sessione richiede un nuovo login e una nuova scansione.
-L'annullamento è cooperativo: una risoluzione DNS bloccata può ritardare la chiusura.
+Gli allegati originali non vengono eseguiti e restano file non attendibili. Materiali e risultati non sono cifrati: proteggere il workspace con i permessi del proprio account.
 
-## Sicurezza e dati locali
+Limiti iniziali: documenti 20 MiB, file 2 GiB, totale 10 GiB, 10.000 pagine/risorse; timeout 10 s, budget richiesta 300 s. Configurabili entro massimi validati. Richieste seriali, intervallo 250 ms, massimo 3 tentativi GET. Retry-After oltre 30 s viene segnalato per ritentare successivamente.
 
-Le richieste sono limitate all'origine HTTPS della FAD e a percorsi di lettura previsti.
-Redirect esterni e indirizzi di rete privati vengono rifiutati; la verifica TLS resta attiva.
-Le pagine esportate vengono ripulite da script, form attivi, campi nascosti e riferimenti remoti.
-Gli allegati originali restano file non attendibili: l'applicazione non li esegue.
-Password e cookie non vengono scritti nel workspace. I materiali e i risultati locali non sono cifrati:
-la directory va protetta con i permessi del proprio account. Non condividere workspace o report contenenti dati personali.
-Le protezioni del filesystem sono pensate per un workspace posseduto dall'utente, non per una directory
-modificabile contemporaneamente da utenti ostili. Prima di modifiche manuali, chiudere l'app e fare una copia.
+L'annullamento è cooperativo; DNS bloccato può ritardare la chiusura. Le protezioni filesystem presuppongono un workspace non modificabile da utenti ostili.
 
-## Sviluppo e verifiche
+SSO/MFA, SCORM, forum, video esterni, script dinamici, PDF dei test e HTTP Range sono fuori dall'ambito concordato. La replica delle sottocartelle richiede percorsi esposti da Moodle. Non si garantisce compatibilità con ogni tema o plugin.
+
+## Log e diagnostica
+
+I log su file sono attivi per default a livello `INFO`. Il terminale mostra il percorso;
+la GUI offre «Apri log». Per una diagnosi dettagliata avviare:
+
+```powershell
+& "C:/Users/edoardo.querio/Desktop/Materie/.venv/Scripts/python.exe" -m fad_downloader --log-level DEBUG
+```
+
+Oppure, su Linux: `fad-downloader --log-level DEBUG`.
+`--log-dir /percorso/logs` sceglie una directory; `--no-log` disabilita la scrittura.
+Queste opzioni precedono il sottocomando, per esempio `fad-downloader --log-level DEBUG download --demo`.
+
+Directory predefinita: `%LOCALAPPDATA%/fad-downloader/logs` su Windows;
+`$XDG_STATE_HOME/fad-downloader/logs` o `~/.local/state/fad-downloader/logs` su Linux.
+Formato JSON Lines: una riga per evento, con ora UTC, livello, PID, thread, sessione
+e identificativo dell'operazione. Ogni processo usa un proprio file per evitare
+collisioni nella rotazione: massimo 5 MiB e 5 copie precedenti per processo.
+I file di processi precedenti restano disponibili e possono essere archiviati o rimossi manualmente.
+
+Copertura: avvio/uscita, GUI e worker, login/logout, disponibilità `.env`, portachiavi,
+richieste e redirect, retry, scansione, pianificazione, download/export, byte trasferiti,
+scritture atomiche e lock, configurazione, catalogo, piani, backup/ripristino e integrità.
+`DEBUG` aggiunge dettagli di rete e filesystem; `INFO` registra esiti e tempi;
+`WARNING`/`ERROR` evidenziano i problemi. Gli errori includono codice, tipo e nomi funzione/righe.
+
+Password, username, cookie, token, valori delle query, payload, HTML, titoli dei corsi,
+nomi dei materiali e percorsi di lavoro non vengono registrati. Le risorse sono identificate
+da un prefisso dell'hash; la rete usa solo nomi di route conosciute e nomi di parametri consentiti.
+I messaggi grezzi delle eccezioni e i log delle librerie HTTP non vengono copiati nei file.
+Su Linux i nuovi file hanno permessi `600`. I log diagnostici possono essere prodotti anche
+in simulazione, che continua a non scrivere materiali o stato del workspace.
+
+## Test e build
 
 ```bash
 python -m pip install -e '.[dev]'
@@ -104,9 +163,6 @@ python -m bandit -r src/fad_downloader
 python -m build
 ```
 
-Su Linux senza display: `sudo apt install xvfb`, quindi `xvfb-run -a python -m pytest -q`.
-I test bloccano la rete e usano dati sintetici. Un test GUI viene saltato se manca il display;
-il test dei link simbolici POSIX viene saltato su Windows.
-L'organizzazione segue i moduli `domain`, `storage`, `network`, `credentials`, `moodle`,
-`exporter`, `services`, `gui`, `cli` e `demo`. GUI e CLI condividono gli stessi servizi.
-Lo stato di collaudo e le attività successive sono nel [registro di versione](../plan/12_VERSIONE_0_0_1.md).
+Senza display Linux usare `xvfb-run -a python -m pytest -q`. I test bloccano rete e isolano configurazione globale. `check_linux.sh` e `check_release.sh` verificano Linux, build, installazione wheel, demo e dipendenze. `requirements-linux-tested.txt` registra versioni provate; non è un lock con hash.
+
+Moduli: domain, storage, network, credentials, env_config, moodle, exporter, services, state, gui, cli, demo. Stato dei requisiti e del collaudo: [registro 0.1.0](../plan/13_VERSIONE_0_1_0.md).

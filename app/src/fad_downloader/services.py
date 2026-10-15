@@ -8,13 +8,17 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urlsplit
 import uuid
 
-from .domain import Account, FadError, Naming, Result, Task, check_cancel
+from .domain import Account, FadError, Limits, Naming, Result, Task, check_cancel
 from .exporter import export_bundle, html_page
 from .storage import SafeRoot, clean_name, components, load_manifest, render_name
+from .observability import event, failure, monitored
 
-SUPPORTED = {"file", "page", "book", "quiz_review"}
+from .domain import SUPPORTED_RESOURCE_KINDS
+
+SUPPORTED = SUPPORTED_RESOURCE_KINDS
 
 
+@monitored("plan.build")
 def plan(resources, workspace: Path, account: Account, naming: Naming, mapping=None):
     mapping = mapping or {}
     records = {}
@@ -27,6 +31,10 @@ def plan(resources, workspace: Path, account: Account, naming: Naming, mapping=N
             "course_name": clean_name(resource.course),
             "section_name": clean_name(resource.section),
             "activity_id": resource.activity_id,
+            "activity_name": clean_name(resource.activity_name or resource.name),
+            "section_index": resource.section_index,
+            "quiz_id": resource.activity_id,
+            "attempt_id": resource.attempt_id or "0",
         }
         course = mapping.get(str(resource.course_id)) or render_name(naming.course, values)
         components(course)
@@ -45,15 +53,22 @@ def plan(resources, workspace: Path, account: Account, naming: Naming, mapping=N
             name = f"{PurePosixPath(stem).stem}_{resource.id[:12]}{PurePosixPath(stem).suffix}"
         else:
             name = f"{stem}_{resource.id[:12]}"
-        relative = f"{course}/{section}/{category}/{resource.activity_id}/{name}"
+        activity = render_name(naming.activity, values)
+        subfolder = resource.subfolder
+        if subfolder:
+            components(subfolder)
+            subfolder += "/"
+        relative = f"{course}/{section}/{category}/{activity}/{subfolder}{name}"
         record = records.get(resource.id)
         if record:
             relative = record.get("base", record["path"])
         components(relative)
         tasks.append(Task(resource, relative))
+    event("plan.result", resources=len(tasks))
     return tasks
 
 
+@monitored("settings.save")
 def save_settings(workspace, account, naming, mapping):
     root = SafeRoot(workspace, create=True)
     with root.lock():
@@ -66,6 +81,7 @@ def save_settings(workspace, account, naming, mapping):
         )
 
 
+@monitored("settings.load")
 def load_settings(workspace):
     if not workspace.is_dir():
         return Naming(), {}
@@ -86,10 +102,13 @@ def load_settings(workspace):
 
 
 class Downloader:
-    def __init__(self, http, account):
+    def __init__(self, http, account, reauthenticate=None):
         self.http, self.account = http, account
+        self.limits = getattr(http, "limits", Limits())
+        self.reauthenticate = reauthenticate
         self.total_bytes = 0
 
+    @monitored("download.transfer")
     def transfer(self, root, url, relative, old=None, expected_size=None):
         before = root.fingerprint(relative)
         if before and (not old or before != (old["size"], old["sha256"])):
@@ -124,8 +143,8 @@ class Downloader:
                         first = False
                     size += len(chunk)
                     self.total_bytes += len(chunk)
-                    if self.total_bytes > 10 * 1024**3:
-                        raise FadError("LIMIT", "Limite totale di 10 GiB raggiunto.")
+                    if self.total_bytes > self.limits.run_bytes:
+                        raise FadError("LIMIT", "Limite totale del download raggiunto.")
                     yield chunk
                 if expected_size is not None and size != expected_size:
                     raise FadError(
@@ -152,6 +171,7 @@ class Downloader:
             )
             return record, status
 
+    @monitored("download.export")
     def export(self, root, task, old):
         if old:
             for item in [old, *old.get("assets", [])]:
@@ -179,17 +199,33 @@ class Downloader:
             "assets": assets,
         }, "aggiornato" if old else "scaricato"
 
+    @monitored("download.run")
     def run(self, tasks, workspace, emit=lambda text: None):
         root = SafeRoot(workspace, create=True)
         results = []
         self.total_bytes = 0
         with root.lock():
             manifest = load_manifest(root, self.account)
+            from .state import resource_data
+
+            root.write_json(
+                ".fad/pending.json",
+                {
+                    "version": 1,
+                    "account": self.account.key,
+                    "tasks": [
+                        {"resource": resource_data(t.resource), "relative": t.relative}
+                        for t in tasks
+                    ],
+                },
+            )
             # Vincola il workspace anche se la prima operazione fallisce.
             root.write_json(".fad/manifest.json", manifest)
             auth_failed = False
+            reauthenticated = False
             for task in tasks:
                 r = task.resource
+                event("download.task_start", resource_id=r.id[:12], kind=r.kind)
                 emit("Download: " + r.name)
                 try:
                     check_cancel(self.http.cancel)
@@ -198,10 +234,30 @@ class Downloader:
                     if r.kind not in SUPPORTED:
                         raise FadError("UNSUPPORTED", "Tipo attività non supportato nella 0.0.1.")
                     old = manifest["records"].get(r.id)
-                    if r.kind == "file":
-                        record, status = self.transfer(root, r.url, task.relative, old, r.size)
-                    else:
-                        record, status = self.export(root, task, old)
+
+                    def execute():
+                        if r.kind == "file":
+                            return self.transfer(root, r.url, task.relative, old, r.size)
+                        return self.export(root, task, old)
+
+                    try:
+                        record, status = execute()
+                    except FadError as exc:
+                        if (
+                            exc.code != "AUTH_REQUIRED"
+                            or reauthenticated
+                            or not self.reauthenticate
+                        ):
+                            raise
+                        reauthenticated = True
+                        event("auth.reauthenticate")
+                        emit("Sessione scaduta: nuovo accesso in corso.")
+                        account = self.reauthenticate()
+                        if account.key != self.account.key:
+                            raise FadError(
+                                "ACCOUNT", "Riautenticazione con account diverso: piano sospeso."
+                            )
+                        record, status = execute()
                     record.update(
                         {
                             "name": r.name,
@@ -213,15 +269,23 @@ class Downloader:
                     manifest["records"][r.id] = record
                     root.write_json(".fad/manifest.json", manifest)
                     results.append(Result(r.id, r.name, status, record["path"]))
+                    event(
+                        "download.task_result",
+                        resource_id=r.id[:12],
+                        status=status,
+                        bytes=record["size"],
+                    )
                 except FadError as exc:
-                    auth_failed |= exc.code == "AUTH_REQUIRED"
+                    failure("download.task_failed", exc)
+                    auth_failed |= exc.code in {"AUTH_REQUIRED", "ACCOUNT"}
                     status = {
                         "CANCELLED": "annullato",
                         "CONFLICT": "conflitto",
                         "UNSUPPORTED": "non_supportato",
                     }.get(exc.code, "fallito")
                     results.append(Result(r.id, r.name, status, message=str(exc)))
-                except OSError:
+                except OSError as exc:
+                    failure("download.filesystem_failed", exc)
                     results.append(
                         Result(
                             r.id,
@@ -236,19 +300,70 @@ class Downloader:
                 "counts": dict(Counter(r.status for r in results)),
                 "results": [asdict(r) for r in results],
             }
+            catalog = root.json(".fad/catalog.json", {})
+            report["scan_warnings"] = catalog.get("warnings", [])
+            report["partial"] = bool(report["scan_warnings"]) or any(
+                r.status not in {"scaricato", "aggiornato", "invariato"} for r in results
+            )
+            report["resources"] = len(results)
+            report["files"] = sum(
+                1 + len(manifest["records"].get(r.resource_id, {}).get("assets", []))
+                for r in results
+                if r.status in {"scaricato", "aggiornato", "invariato"}
+            )
+            failures = {
+                r.resource_id for r in results if r.status in {"fallito", "annullato", "conflitto"}
+            }
+            root.write_json(
+                ".fad/pending.json",
+                {
+                    "version": 1,
+                    "account": self.account.key,
+                    "tasks": [
+                        {"resource": resource_data(t.resource), "relative": t.relative}
+                        for t in tasks
+                        if t.resource.id in failures
+                    ],
+                },
+            )
             root.write_json(".fad/report.json", report)
-            root.write(".fad/index.html", [index_html(manifest)])
+            root.write(".fad/index.html", [index_html(manifest, root)])
+            event(
+                "download.result",
+                resources=report["resources"],
+                files=report["files"],
+                partial=report["partial"],
+                bytes=self.total_bytes,
+            )
             return report
 
 
-def index_html(manifest):
-    body = "<p>Raccolta locale. I file allegati non vengono eseguiti automaticamente.</p><ul>"
+def index_html(manifest, root=None):
+    groups = {}
     for record in manifest["records"].values():
         components(record["path"])
-        body += f'<li>{escape(record["course"])}: <a href="../{quote(record["path"])}">{escape(record["name"])}</a></li>'
-    return html_page("FAD Downloader - Raccolta locale", body + "</ul>")
+        exists = True
+        if root:
+            try:
+                with root.open_read(record["path"]):
+                    pass
+            except (OSError, FadError):
+                exists = False
+        title = escape(record["name"])
+        link = (
+            f'<a href="../{quote(record["path"])}">{title}</a>'
+            if exists
+            else title + " (file locale mancante)"
+        )
+        state = record.get("remote_state", "presente")
+        groups.setdefault(record["course"], []).append(f"<li>{link} — {escape(state)}</li>")
+    body = "<p>Raccolta locale. I file allegati non vengono eseguiti automaticamente.</p>"
+    for course, rows in sorted(groups.items()):
+        body += "<h2>" + escape(course) + "</h2><ul>" + "".join(rows) + "</ul>"
+    return html_page("FAD Downloader - Raccolta locale", body)
 
 
+@monitored("integrity.verify")
 def verify(workspace):
     """Verifica read-only con digest indipendente dalla routine di trasferimento."""
     import hashlib
@@ -269,4 +384,29 @@ def verify(workspace):
                     issues.append(item["path"] + ": contenuto modificato")
             except (OSError, FadError):
                 issues.append(item["path"] + ": non leggibile")
+    event("integrity.result", files=checked, issues=len(issues))
     return {"checked": checked, "issues": issues}
+
+
+def alternate_tasks(workspace, account):
+    """Nuove copie per i conflitti; la copia modificata non viene sovrascritta."""
+    from dataclasses import replace
+    from .state import load_pending
+    from .domain import identifier
+
+    root = SafeRoot(workspace)
+    report = root.json(".fad/report.json", {})
+    conflicts = {
+        r["resource_id"] for r in report.get("results", []) if r.get("status") == "conflitto"
+    }
+    tasks = []
+    for task in load_pending(workspace, account):
+        if task.resource.id in conflicts:
+            suffix = uuid.uuid4().hex[:12]
+            new_id = identifier(task.resource.id + suffix)
+            path = PurePosixPath(task.relative)
+            destination = str(path.with_name(path.stem + "_copia_" + suffix + path.suffix))
+            tasks.append(Task(replace(task.resource, id=new_id), destination))
+    if not tasks:
+        raise FadError("STATE", "Nessun conflitto recuperabile nel report.")
+    return tasks

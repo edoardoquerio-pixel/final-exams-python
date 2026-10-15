@@ -4,12 +4,16 @@
 
 | Fase | Stato | Evidenza | Problemi |
 |---|---|---|---|
-| F0, F0A, F1-F11 | Da eseguire | Nessun test di implementazione registrato | Rischi iniziali sotto |
+| F0, F0A, F1-F11 | In corso, con ambito sperimentale 0.0.1 | [Registro versione](12_VERSIONE_0_0_1.md): test offline e Linux | Gate finali e prove Moodle reali ancora aperti |
 | Revisione documentale 1.1 | Verificata | [Esito](11_REVISIONE.md) e [matrice](10_TRACCIABILITA.md) | Prove Linux/Moodle ancora da eseguire |
 
 Espandere una riga per fase all'avvio. Stati: da eseguire, in corso, verificata, bloccata. «Verificata» richiede evidenza, non soltanto codice generato.
 
 ## Scheda task
+
+Aggiornamento 0.1.0: [copertura dei requisiti e prove effettuate](13_VERSIONE_0_1_0.md).
+Implementazione del flusso completo, test offline e Ubuntu verificati; login reale rifiutato,
+gate F0A e validazione finale ancora aperti.
 
 ```text
 ID / fase / requisiti:

@@ -76,3 +76,33 @@ def test_cancel_and_size_limit():
     with pytest.raises(FadError, match="limite"):
         list(client.chunks(response, 5))
     client.close()
+
+
+def test_moodle_login_session_redirect_is_followed_without_password():
+    client = HttpClient()
+    first = Mock(status_code=303, headers={"Location": ORIGIN + "/login/index.php?testsession=12"})
+    second = Mock(status_code=303, headers={"Location": ORIGIN + "/my/index.php"})
+    final = Mock(status_code=200, headers={})
+    client.session.request = Mock(side_effect=[first, second, final])
+    assert (
+        client.request(ORIGIN + "/login/index.php", "POST", data={"password": "SENTINEL"}) is final
+    )
+    calls = client.session.request.call_args_list
+    assert calls[1].args == ("GET", ORIGIN + "/login/index.php?testsession=12")
+    assert all("data" not in call.kwargs for call in calls[1:])
+    client.close()
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "testsession=abc",
+        "testsession=-1",
+        "testsession=0",
+        "testsession=1&testsession=2",
+        "testsession=1&delete=1",
+    ],
+)
+def test_invalid_login_session_redirect_remains_blocked(query):
+    with pytest.raises(FadError):
+        validate_url(ORIGIN + "/login/index.php?" + query)

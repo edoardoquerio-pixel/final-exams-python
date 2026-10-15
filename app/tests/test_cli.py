@@ -33,3 +33,17 @@ def test_cli_help_without_display_or_tk():
     )
     assert result.returncode == 0, result.stderr
     assert "download" in result.stdout
+
+
+def test_cli_offline_catalog_backup_restore(tmp_path, capsys):
+    workspace = str(tmp_path / "workspace")
+    assert main(["scan", "--demo", "--workspace", workspace]) == 0
+    capsys.readouterr()
+    assert main(["catalog", "--workspace", workspace]) == 0
+    assert len(json.loads(capsys.readouterr().out)["resources"]) == 3
+    assert main(["backup", "--workspace", workspace]) == 0
+    folder = json.loads(capsys.readouterr().out)["backup"]
+    assert main(["restore", "--workspace", workspace, "--backup", folder]) == 0
+    capsys.readouterr()
+    assert main(["recovery", "--workspace", workspace]) == 0
+    assert folder in json.loads(capsys.readouterr().out)["backups"]

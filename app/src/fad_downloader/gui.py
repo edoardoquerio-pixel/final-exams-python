@@ -8,18 +8,31 @@ from threading import Event
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 import webbrowser
+from .observability import event, failure, span
 
-from .credentials import CredentialStore
 from .demo import DEMO_ACCOUNT, DemoHttp, catalog as demo_catalog
-from .domain import Catalog, FadError, Naming
+from .domain import Catalog, FadError, Limits, Naming
+from .state import (
+    backup_state,
+    load_catalog,
+    load_pending,
+    preferences,
+    recovery_inventory,
+    restore_state,
+    save_catalog,
+    save_preferences,
+)
 from .moodle import Moodle
 from .network import HttpClient
 from .services import Downloader, load_settings, plan, save_settings, verify
 
 
 class App:
-    def __init__(self, window, demo=False):
+    def __init__(self, window, demo=False, env_file=None):
         self.window, self.demo = window, demo
+        from .env_config import default_env_path
+
+        self.env_file = (Path(env_file) if env_file is not None else default_env_path()).absolute()
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="fad")
         self.messages = Queue(maxsize=200)
         self.cancel = Event()
@@ -31,20 +44,50 @@ class App:
         self.account = None
         self.catalog = Catalog()
         self.mapping = {}
+        self.changes = {}
+        self.limits = Limits()
+        self.login_username = ""
         self.tasks = []
         self.plan_revision = 0
         self.last_failed = set()
         self.buttons = []
-        window.title("FAD Downloader 0.0.1" + (" - Demo offline" if demo else ""))
-        window.geometry("1120x780")
-        window.minsize(820, 620)
+        window.title("FAD Downloader 0.1.0" + (" - Demo offline" if demo else ""))
+        window.geometry("1220x860")
+        window.minsize(1050, 740)
         self.username, self.password = tk.StringVar(), tk.StringVar()
-        self.remember = tk.BooleanVar()
+        if not demo:
+            from .env_config import read_credentials
+
+            try:
+                username, password = read_credentials(self.env_file)
+                self.username.set(username)
+                self.password.set(password)
+            except FadError:
+                pass
         self.workspace = tk.StringVar(value=str(Path.home() / ("FAD-demo" if demo else "FAD")))
         self.search, self.type = tk.StringVar(), tk.StringVar(value="Tutti")
         self.course_template = tk.StringVar(value="{course_id}_{course_name}")
         self.section_template = tk.StringVar(value="{section_name}")
         self.materials, self.quizzes = tk.StringVar(value="Materiali"), tk.StringVar(value="Test")
+        self.activity_template = tk.StringVar(value="{activity_id}_{activity_name}")
+        if not demo:
+            try:
+                config = preferences()
+                self.workspace.set(config.get("workspace", self.workspace.get()))
+                self.limits = Limits(**config.get("limits", {}))
+                defaults, self.mapping = load_settings(Path(self.workspace.get()))
+                if not (Path(self.workspace.get()) / ".fad/settings.json").exists():
+                    defaults = Naming(**config.get("naming", {}))
+                for variable, key in (
+                    (self.course_template, "course"),
+                    (self.section_template, "section"),
+                    (self.materials, "materials"),
+                    (self.quizzes, "quizzes"),
+                    (self.activity_template, "activity"),
+                ):
+                    variable.set(asdict(defaults)[key])
+            except (FadError, TypeError, OSError):
+                pass
         self.status = tk.StringVar(
             value="Demo offline" if demo else "Accedi alla FAD oppure apri una raccolta locale."
         )
@@ -55,6 +98,7 @@ class App:
             self.section_template,
             self.materials,
             self.quizzes,
+            self.activity_template,
         ):
             var.trace_add("write", lambda *_: self.invalidate())
         self.search.trace_add("write", lambda *_: self.populate())
@@ -81,8 +125,9 @@ class App:
         ttk.Entry(login, textvariable=self.username, width=20).pack(side="left", padx=5)
         ttk.Label(login, text="Password").pack(side="left")
         ttk.Entry(login, textvariable=self.password, show="•", width=20).pack(side="left", padx=5)
-        ttk.Checkbutton(login, text="Ricorda", variable=self.remember).pack(side="left")
+        ttk.Label(login, text="Salvataggio automatico in .env").pack(side="left", padx=5)
         self.button(login, "Accedi", self.login)
+        self.button(login, "Carica .env", self.reload_credentials)
         self.button(login, "Esci account", self.logout)
         self.button(login, "Dimentica password", self.forget)
         paths = ttk.LabelFrame(shell, text="2. Cartelle e nomenclatura", padding=7)
@@ -101,6 +146,7 @@ class App:
                 ("Sezione", self.section_template),
                 ("Materiali", self.materials),
                 ("Test", self.quizzes),
+                ("Attività", self.activity_template),
             )
         ):
             ttk.Label(grid, text=label).grid(row=0, column=column, sticky="w")
@@ -108,13 +154,14 @@ class App:
             grid.columnconfigure(column, weight=1)
         ttk.Label(
             paths,
-            text="Segnaposto: {course_id}, {course_name}, {section_name}, {activity_id}. Seleziona un corso per associarlo a una cartella.",
+            text="Segnaposto: {course_id}, {course_name}, {section_index}, {section_name}, {activity_id}, {activity_name}, {quiz_id}, {attempt_id}.",
         ).pack(anchor="w")
         actions = ttk.Frame(shell)
         actions.pack(fill="x")
         self.button(actions, "Scansiona FAD", self.scan)
         self.button(actions, "Seleziona tutto", self.select_all)
         self.button(actions, "Associa cartella", self.map_course)
+        self.button(actions, "Limiti", self.edit_limits)
         ttk.Label(actions, text="Cerca").pack(side="left", padx=5)
         ttk.Entry(actions, textvariable=self.search, width=20).pack(side="left")
         ttk.Combobox(
@@ -133,7 +180,7 @@ class App:
             "#0", text="Seleziona corsi, sezioni o attività (Ctrl/Shift per selezione multipla)"
         )
         self.tree.heading("type", text="Tipo")
-        self.tree.column("type", width=130, stretch=False)
+        self.tree.column("type", width=190, stretch=False)
         self.tree.pack(side="left", fill="both", expand=True)
         scroll = ttk.Scrollbar(catalog_frame, command=self.tree.yview)
         scroll.pack(side="right", fill="y")
@@ -147,9 +194,18 @@ class App:
         self.button(controls, "Anteprima", self.preview_plan)
         self.button(controls, "Scarica piano", self.download)
         self.button(controls, "Ritenta falliti", self.retry)
-        ttk.Button(controls, text="Annulla", command=self.cancel.set).pack(side="left", padx=3)
+        ttk.Button(controls, text="Annulla", command=self.cancel_work).pack(side="left", padx=3)
         self.button(controls, "Verifica file", self.verify_files)
         self.button(controls, "Apri indice locale", self.open_index)
+        local = ttk.Frame(shell)
+        local.pack(fill="x")
+        self.button(local, "Apri catalogo offline", self.open_catalog)
+        self.button(local, "Leggi report", self.read_report)
+        self.button(local, "Recupera piano", self.resume_plan)
+        self.button(local, "Copia conflitti", self.copy_conflicts)
+        self.button(local, "Backup stato", self.backup)
+        self.button(local, "Ripristina backup", self.restore)
+        self.button(local, "Apri log", self.open_log)
         self.progress = ttk.Progressbar(shell, mode="indeterminate")
         self.progress.pack(fill="x", pady=6)
         ttk.Label(shell, textvariable=self.status).pack(anchor="w")
@@ -160,6 +216,7 @@ class App:
             self.section_template.get(),
             self.materials.get(),
             self.quizzes.get(),
+            self.activity_template.get(),
         )
 
     def invalidate(self):
@@ -185,7 +242,13 @@ class App:
             return
         self.cancel.clear()
         self.finish = finish
-        self.future = self.pool.submit(function)
+        event("gui.worker_submitted")
+
+        def work():
+            with span("gui.worker"):
+                return function()
+
+        self.future = self.pool.submit(work)
         for button in self.buttons:
             button.configure(state="disabled")
         self.progress.start(15)
@@ -210,9 +273,15 @@ class App:
                 if not self.closing:
                     finish(value)
             except FadError as exc:
+                failure("gui.operation_failed", exc)
                 self.status.set(str(exc))
                 self.append(f"{exc.code}: {exc}")
-            except Exception:
+                if exc.code == "AUTH_REQUIRED":
+                    self.append(
+                        "Il piano è conservato: accedi allo stesso account e premi Recupera piano."
+                    )
+            except Exception as exc:
+                failure("gui.unexpected_error", exc)
                 self.status.set(
                     "Operazione non completata. Controllare configurazione, spazio e compatibilità Moodle."
                 )
@@ -226,15 +295,24 @@ class App:
         self.window.after(100, self.poll)
 
     def login(self):
-        username, password, remember = (
+        username, password = (
             self.username.get().strip(),
             self.password.get(),
-            self.remember.get(),
         )
+        try:
+            from .env_config import read_credentials, save_credentials
+
+            env_username, env_password = read_credentials(self.env_file)
+        except FadError as exc:
+            self.status.set(str(exc))
+            return
+        username = username or env_username
+        if not password and username == env_username:
+            password = env_password
+        env_password = None
         if not username:
             self.status.set("Inserisci lo username.")
             return
-        self.password.set("")
         self.invalidate()
         self.catalog = Catalog()
         self.populate()
@@ -245,60 +323,111 @@ class App:
             if self.client:
                 self.client.close()
             if not password:
-                password = CredentialStore().get(username)
-            if not password:
                 raise FadError("AUTH_REQUIRED", "Password richiesta.")
-            self.client = HttpClient(self.cancel)
+            self.client = HttpClient(self.cancel, self.limits)
             self.moodle = Moodle(self.client)
             try:
                 account = self.moodle.login(username, password)
-                if remember:
-                    try:
-                        CredentialStore().save(username, password)
-                    except FadError as exc:
-                        self.emit(str(exc))
-                return account
+                try:
+                    save_credentials(username, password, self.env_file)
+                except (FadError, OSError):
+                    self.emit(
+                        "Accesso riuscito, ma credenziali non salvate nel .env. Controlla percorso e permessi."
+                    )
+                return account, username
             finally:
                 password = None
 
         self.start(work, self.logged_in)
 
-    def logged_in(self, account):
+    def logged_in(self, value):
+        account, self.login_username = value
         self.account, self.demo = account, False
-        self.status.set("Accesso riuscito. Premi Scansiona FAD.")
+        self.status.set("Accesso riuscito. Scansione iniziale in corso.")
+        self.window.after_idle(self.scan)
 
     def logout(self):
+        if self.moodle:
+            moodle = self.moodle
+
+            def work():
+                try:
+                    moodle.logout()
+                    return True
+                except FadError:
+                    return False
+
+            def finish(remote):
+                self.clear_session()
+                if not remote:
+                    self.status.set("Sessione locale chiusa; logout remoto non confermato.")
+
+            self.start(work, finish)
+            return
+        self.clear_session()
+
+    def clear_session(self):
         if self.client:
             self.client.close()
         self.account, self.moodle, self.client = None, None, None
         self.password.set("")
         self.catalog, self.mapping = Catalog(), {}
+        self.changes = {}
+        self.login_username = ""
         self.populate()
         self.status.set("Sessione locale chiusa.")
 
     def forget(self):
-        username = self.username.get().strip()
-        if username:
-            self.start(
-                lambda: CredentialStore().delete(username),
-                lambda _: self.status.set("Credenziale eliminata dal portachiavi."),
-            )
+        if self.demo:
+            self.status.set("La demo non modifica le credenziali salvate.")
+            return
+        from .env_config import save_credentials
+
+        def finish(_):
+            self.username.set("")
+            self.password.set("")
+            self.status.set("Credenziali eliminate dal file .env.")
+
+        self.start(lambda: save_credentials("", "", self.env_file), finish)
+
+    def reload_credentials(self):
+        from .env_config import read_credentials
+
+        try:
+            username, password = read_credentials(self.env_file)
+        except FadError as exc:
+            self.status.set(str(exc))
+            return
+        self.username.set(username)
+        self.password.set(password)
+        self.status.set("Credenziali caricate dal .env; premi Accedi.")
 
     def scan(self):
         if not self.account:
             self.status.set("Accedi prima di scansionare.")
             return
-        self.start(
-            lambda: demo_catalog() if self.demo else self.moodle.scan(self.emit), self.scanned
-        )
+        workspace, account = Path(self.workspace.get()), self.account
+
+        def work():
+            catalog = demo_catalog() if self.demo else self.moodle.scan(self.emit)
+            changes = save_catalog(workspace, account, catalog)
+            return catalog, changes
+
+        self.start(work, self.scanned)
 
     def scanned(self, catalog):
+        if isinstance(catalog, tuple):
+            catalog, self.changes = catalog
         self.catalog = catalog
         self.populate()
         for warning in catalog.warnings:
             self.append(warning)
+        if self.changes.get("not_seen"):
+            self.append(
+                f"Risorse non rilevate: {len(self.changes['not_seen'])}. Le copie locali vengono conservate."
+            )
         self.status.set(
-            f"{len(catalog.courses)} corsi, {len(catalog.resources)} risorse. Seleziona i contenuti e genera l'anteprima."
+            f"{len(catalog.courses)} corsi, {len(catalog.sections)} sezioni, {len(catalog.resources)} risorse. Seleziona i contenuti e genera l'anteprima."
         )
 
     def populate(self):
@@ -306,6 +435,28 @@ class App:
         self.tree.delete(*self.tree.get_children())
         self.nodes = {}
         search, mode = self.search.get().casefold(), self.type.get()
+        if mode == "Tutti":
+            for course in self.catalog.courses:
+                if not search or search in course.name.casefold():
+                    self.tree.insert(
+                        "", "end", iid="course:" + str(course.id), text=course.name, open=True
+                    )
+            courses = {c.id: c for c in self.catalog.courses}
+            for section in self.catalog.sections:
+                course = courses.get(section.course_id)
+                if not course or (search and search not in (course.name + section.name).casefold()):
+                    continue
+                parent = "course:" + str(section.course_id)
+                if not self.tree.exists(parent):
+                    self.tree.insert("", "end", iid=parent, text=course.name, open=True)
+                self.tree.insert(
+                    parent,
+                    "end",
+                    iid=parent + ":section:" + section.id,
+                    text=section.name,
+                    values=("Sezione" if section.available else "Non disponibile",),
+                    open=True,
+                )
         for resource in self.catalog.resources:
             if (
                 search
@@ -315,13 +466,30 @@ class App:
             if mode != "Tutti" and (resource.kind == "quiz_review") != (mode == "Test"):
                 continue
             course_id = "course:" + str(resource.course_id)
-            section_id = course_id + ":" + resource.section
+            section_id = (
+                course_id + ":section:" + resource.section_id
+                if resource.section_id
+                else course_id + ":" + resource.section
+            )
             if not self.tree.exists(course_id):
                 self.tree.insert("", "end", iid=course_id, text=resource.course, open=True)
             if not self.tree.exists(section_id):
                 self.tree.insert(course_id, "end", iid=section_id, text=resource.section, open=True)
             self.tree.insert(
-                section_id, "end", iid=resource.id, text=resource.name, values=(resource.kind,)
+                section_id,
+                "end",
+                iid=resource.id,
+                text=resource.name,
+                values=(
+                    resource.kind
+                    + (
+                        " · nuovo"
+                        if resource.id in self.changes.get("new", [])
+                        else " · aggiornato"
+                        if resource.id in self.changes.get("changed", [])
+                        else ""
+                    ),
+                ),
             )
             self.nodes[resource.id] = resource
 
@@ -379,6 +547,7 @@ class App:
                 (self.section_template, "section"),
                 (self.materials, "materials"),
                 (self.quizzes, "quizzes"),
+                (self.activity_template, "activity"),
             ):
                 var.set(asdict(naming)[key])
             self.status.set("Impostazioni caricate.")
@@ -395,8 +564,15 @@ class App:
             dict(self.mapping),
             self.account,
         )
+        limits = self.limits
+
+        def work():
+            save_settings(workspace, account, naming, mapping)
+            if not self.demo:
+                save_preferences(workspace, naming, limits)
+
         self.start(
-            lambda: save_settings(workspace, account, naming, mapping),
+            work,
             lambda _: self.status.set("Impostazioni salvate."),
         )
 
@@ -430,6 +606,11 @@ class App:
         self.start(lambda: plan(selected, workspace, account, naming, mapping), finish)
 
     def download(self):
+        if not self.account or not self.client:
+            self.status.set(
+                "Accedi prima di scaricare; il catalogo offline è consultabile senza login."
+            )
+            return
         if not self.tasks:
             self.status.set("Genera prima l'anteprima aggiornata.")
             return
@@ -440,7 +621,10 @@ class App:
             self.planned_workspace,
         )
         self.start(
-            lambda: Downloader(client, account).run(tasks, workspace, self.emit), self.downloaded
+            lambda: Downloader(client, account, None if self.demo else self.reauthenticate).run(
+                tasks, workspace, self.emit
+            ),
+            self.downloaded,
         )
 
     def downloaded(self, report):
@@ -477,22 +661,158 @@ class App:
         else:
             self.status.set("Indice non presente: completa almeno un download.")
 
+    def reauthenticate(self):
+        """Eseguito nel worker: nessun accesso ai widget."""
+        from .env_config import read_credentials
+
+        username, password = read_credentials(self.env_file)
+        if username != self.login_username:
+            password = None
+        if not password:
+            raise FadError("AUTH_REQUIRED", "Nuovo accesso manuale necessario; piano conservato.")
+        try:
+            return self.moodle.login(self.login_username, password)
+        finally:
+            password = None
+
+    def open_catalog(self):
+        workspace, account = Path(self.workspace.get()), self.account
+        self.start(lambda: load_catalog(workspace, account), self.scanned)
+
+    def read_report(self):
+        from .storage import SafeRoot
+
+        workspace = Path(self.workspace.get())
+
+        def work():
+            report = SafeRoot(workspace).json(".fad/report.json")
+            if report is None:
+                raise FadError("STATE", "Report locale non presente.")
+            return report
+
+        self.start(work, self.downloaded)
+
+    def show_tasks(self, tasks, workspace):
+        self.tasks, self.planned_workspace = tasks, workspace
+        self.preview.configure(state="normal")
+        self.preview.delete("1.0", "end")
+        self.preview.insert(
+            "end", "\n\n".join(f"{t.resource.name}\n  → {t.relative}" for t in tasks)
+        )
+        self.preview.configure(state="disabled")
+        self.status.set(
+            f"Anteprima recuperata: {len(tasks)} risorse. Controlla le destinazioni prima di scaricare."
+        )
+
+    def resume_plan(self):
+        if not self.account:
+            self.status.set("Accedi allo stesso account prima di recuperare il piano.")
+            return
+        workspace, account = Path(self.workspace.get()), self.account
+        self.start(
+            lambda: load_pending(workspace, account),
+            lambda tasks: self.show_tasks(tasks, workspace),
+        )
+
+    def copy_conflicts(self):
+        if not self.account:
+            self.status.set("Accedi prima di scaricare copie alternative.")
+            return
+        from .services import alternate_tasks
+
+        workspace, account = Path(self.workspace.get()), self.account
+        self.start(
+            lambda: alternate_tasks(workspace, account),
+            lambda tasks: self.show_tasks(tasks, workspace),
+        )
+
+    def backup(self):
+        workspace = Path(self.workspace.get())
+        self.start(
+            lambda: backup_state(workspace),
+            lambda path: self.status.set("Backup dello stato creato: " + path),
+        )
+
+    def restore(self):
+        workspace = Path(self.workspace.get())
+
+        def finish(inventory):
+            self.append("Temporanei rilevati: " + str(len(inventory["temporary_files"])))
+            if not inventory["backups"]:
+                self.status.set("Nessun backup disponibile.")
+                return
+            folder = simpledialog.askstring(
+                "Ripristina stato",
+                "Backup disponibili:\n" + "\n".join(inventory["backups"]),
+                initialvalue=inventory["backups"][-1],
+            )
+            if folder and messagebox.askyesno(
+                "Ripristina stato",
+                "Ripristinare il backup? Lo stato attuale verrà conservato. I materiali non saranno modificati.",
+            ):
+                self.start(
+                    lambda: restore_state(workspace, folder),
+                    lambda _: self.status.set("Stato ripristinato. Riapri catalogo e report."),
+                )
+
+        self.start(lambda: recovery_inventory(workspace), finish)
+
+    def edit_limits(self):
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Limiti operativi")
+        fields = {}
+        for row, (key, value) in enumerate(asdict(self.limits).items()):
+            ttk.Label(dialog, text=key).grid(row=row, column=0, padx=10, pady=4)
+            fields[key] = tk.StringVar(value=str(value))
+            ttk.Entry(dialog, textvariable=fields[key]).grid(row=row, column=1, padx=10)
+        message = tk.StringVar(
+            value="Dimensioni in byte; tempi in secondi. Salva impostazioni per conservarli."
+        )
+        ttk.Label(dialog, textvariable=message).grid(row=len(fields), columnspan=2, padx=10, pady=8)
+
+        def apply():
+            try:
+                self.limits = Limits(**{key: int(var.get()) for key, var in fields.items()})
+            except (ValueError, FadError):
+                message.set("Valori non validi o oltre il massimo consentito.")
+                return
+            if self.client and hasattr(self.client, "limits"):
+                self.client.limits = self.limits
+            dialog.destroy()
+
+        ttk.Button(dialog, text="Applica", command=apply).grid(
+            row=len(fields) + 1, columnspan=2, pady=8
+        )
+
+    def cancel_work(self):
+        event("gui.cancel_requested")
+        self.cancel.set()
+
+    def open_log(self):
+        from . import observability
+
+        if observability.log_path:
+            webbrowser.open(observability.log_path.as_uri())
+        else:
+            self.status.set("Log su file disabilitati.")
+
     def close(self):
         if self.future and not messagebox.askyesno(
             "Operazione in corso", "Annullare e chiudere al termine della richiesta corrente?"
         ):
             return
         self.closing = True
+        event("gui.close_requested")
         self.cancel.set()
         self.status.set("Chiusura in corso…")
 
 
-def launch(demo=False):
+def launch(demo=False, env_file=None):
     try:
         window = tk.Tk()
     except tk.TclError:
         print("Display grafico non disponibile. Usa --help per i comandi da terminale.")
         return 1
-    App(window, demo)
+    App(window, demo, env_file)
     window.mainloop()
     return 0

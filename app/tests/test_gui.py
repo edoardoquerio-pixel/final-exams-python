@@ -35,6 +35,26 @@ def test_gui_demo_preview_download_verify(tmp_path):
         app.verify_files()
         drain()
         assert "problemi: 0" in app.status.get()
+        app.scan()
+        drain()
+        assert len(app.changes["new"]) == 3
+        app.catalog.resources = []
+        app.open_catalog()
+        drain()
+        assert len(app.catalog.resources) == 3
+        app.read_report()
+        drain()
+        app.backup()
+        drain()
+        assert "Backup" in app.status.get()
+        from fad_downloader.domain import Section
+
+        app.catalog.sections = [Section("1", 1, "Uguale", 1), Section("2", 1, "Uguale", 2)]
+        app.populate()
+        assert app.tree.exists("course:1:section:1")
+        assert app.tree.exists("course:1:section:2")
+        app.tree.selection_set("course:1:section:2")
+        assert not app.selected()
     finally:
         app.cancel.set()
         app.pool.shutdown(wait=True)

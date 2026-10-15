@@ -9,6 +9,7 @@ import nh3
 
 from .domain import FadError, identifier, stable_url
 from .moodle import soup_document
+from .observability import event, monitored
 
 TAGS = {
     "p",
@@ -86,6 +87,7 @@ def html_page(title, body):
     ).encode()
 
 
+@monitored("export.html")
 def export_bundle(client, resource, write_asset):
     """write_asset(url, name) salva un asset nella generazione; errori impediscono il commit."""
     url = resource.url
@@ -102,14 +104,28 @@ def export_bundle(client, resource, write_asset):
             )
         )
     fragments, visited, pending = [], set(), [url]
+    question_ids = set()
+    summary_added = False
+    book_fallback = False
     while pending:
         current = pending.pop(0)
         if stable_url(current) in visited:
             continue
-        if len(visited) >= 100:
+        if len(visited) >= getattr(getattr(client, "limits", None), "pages", 10000):
             raise FadError("LIMIT", "Troppe pagine di revisione.")
         visited.add(stable_url(current))
-        content, final = client.document(current)
+        try:
+            content, final = client.document(current)
+        except FadError as exc:
+            if (
+                resource.kind == "book"
+                and not book_fallback
+                and exc.code in {"ACCESS_DENIED", "NETWORK"}
+            ):
+                book_fallback = True
+                pending.append(resource.url)
+                continue
+            raise
         soup = soup_document(content, final)
         if resource.kind == "quiz_review":
             nodes = soup.select(".que, .quizreviewsummary, .quizattemptsummary")
@@ -131,6 +147,19 @@ def export_bundle(client, resource, write_asset):
                         "UNSUPPORTED",
                         "Tipo di domanda non supportato: export sospeso per non perdere risposte.",
                     )
+            unique = []
+            for node in nodes:
+                if "que" in node.get("class", []):
+                    qid = node.get("id")
+                    if qid and qid in question_ids:
+                        continue
+                    if qid:
+                        question_ids.add(qid)
+                    unique.append(node)
+                elif not summary_added:
+                    unique.append(node)
+            nodes = unique
+            summary_added = True
             attempt = parse_qs(urlsplit(resource.url).query).get("attempt")
             for a in soup.select(".paging a[href], .pagination a[href], .othernav a[href]"):
                 link = urljoin(final, a["href"])
@@ -141,10 +170,23 @@ def export_bundle(client, resource, write_asset):
                     pending.append(link)
         elif resource.kind == "book":
             nodes = soup.select(".book_content")
+            if book_fallback:
+                mid = parse_qs(urlsplit(resource.url).query).get("id")
+                for link in soup.select(".book_toc a[href], .book_toc_numbered a[href]"):
+                    target = urljoin(final, link["href"])
+                    query = parse_qs(urlsplit(target).query)
+                    if (
+                        urlsplit(target).path == "/mod/book/view.php"
+                        and query.get("id") == mid
+                        and "chapterid" in query
+                    ):
+                        pending.append(target)
         else:
             nodes = soup.select(
                 ".resourcecontent, #region-main .generalbox .no-overflow, .activity-description .no-overflow"
             )
+        if not nodes and resource.kind == "quiz_review" and question_ids:
+            continue
         if not nodes:
             raise FadError("UNSUPPORTED", "Contenuto HTML non riconosciuto nel tema Moodle.")
         # Copia i frammenti per non alterare il DOM mentre si cercano pagine successive.
@@ -182,4 +224,5 @@ def export_bundle(client, resource, write_asset):
                 url_schemes=set(),
             )
         )
+    event("export.result", count=len(visited), kind=resource.kind)
     return html_page(resource.name, "\n".join(fragments))

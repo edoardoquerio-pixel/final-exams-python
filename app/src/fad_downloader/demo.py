@@ -31,7 +31,7 @@ def catalog():
                 size,
             )
         )
-    return Catalog([course], resources, ["Modalità demo: dati sintetici, nessun accesso alla FAD."])
+    return Catalog([course], resources)
 
 
 class DemoResponse:

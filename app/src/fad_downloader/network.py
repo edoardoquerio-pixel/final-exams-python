@@ -12,16 +12,61 @@ from urllib3.connection import HTTPSConnection
 from urllib3.connectionpool import HTTPSConnectionPool
 from urllib3.util.connection import create_connection
 
-from .domain import FadError, ORIGIN, check_cancel
+from .domain import FadError, Limits, ORIGIN, check_cancel
+from .observability import event, failure, monitored, query_names, route_name
+import logging
 
 READ_METHODS = {
     "core_course_get_enrolled_courses_by_timeline_classification",
     "core_course_get_contents",
+    "core_get_fragment",
 }
+
+
+def validate_ajax_payload(payload):
+    if not isinstance(payload, list) or not payload:
+        raise FadError("URL", "Metodo AJAX non consentito.")
+    for item in payload:
+        if not isinstance(item, dict) or item.get("methodname") not in READ_METHODS:
+            raise FadError("URL", "Metodo AJAX non consentito.")
+        if item["methodname"] == "core_get_fragment":
+            args = item.get("args", {})
+            try:
+                if (
+                    set(args) != {"component", "callback", "contextid", "args"}
+                    or args["component"] != "theme_snap"
+                    or args["callback"] != "section"
+                    or type(args["contextid"]) is not int
+                    or args["contextid"] <= 0
+                ):
+                    raise ValueError
+                values = args["args"]
+                if (
+                    not isinstance(values, list)
+                    or len(values) != 2
+                    or any(set(v) != {"name", "value"} for v in values)
+                ):
+                    raise ValueError
+                params = {v["name"]: str(v["value"]) for v in values}
+                if (
+                    set(params) != {"courseid", "section"}
+                    or any(not v.isascii() or not v.isdigit() for v in params.values())
+                    or int(params["courseid"]) <= 0
+                ):
+                    raise ValueError
+            except (TypeError, KeyError, ValueError):
+                raise FadError(
+                    "URL", "Solo i frammenti di lettura delle sezioni Snap sono consentiti."
+                ) from None
+
+
 ROUTES = {
     "/": set(),
+    "/index.php": set(),
     "/my/": {"myoverviewpage"},
-    "/login/index.php": set(),
+    "/my/index.php": {"myoverviewpage"},
+    "/login/index.php": {"testsession"},
+    "/login/logout.php": {"sesskey"},
     "/course/view.php": {"id", "section", "sectionid"},
     "/mod/resource/view.php": {"id", "redirect"},
     "/mod/folder/view.php": {"id"},
@@ -34,7 +79,7 @@ ROUTES = {
 }
 
 
-def validate_url(url: str, method: str = "GET") -> None:
+def validate_url(url: str, method: str = "GET", allow_logout=False) -> None:
     try:
         parts = urlsplit(url)
         origin = urlsplit(ORIGIN)
@@ -47,6 +92,8 @@ def validate_url(url: str, method: str = "GET") -> None:
         ):
             raise ValueError
         path = unquote(parts.path)
+        if path == "/login/logout.php" and not allow_logout:
+            raise ValueError
         if ".." in path.split("/") or "\\" in path or "%" in path or any(ord(c) < 32 for c in url):
             raise ValueError
         allowed = (
@@ -54,6 +101,16 @@ def validate_url(url: str, method: str = "GET") -> None:
         )
         if allowed is None or not set(parse_qs(parts.query)).issubset(allowed):
             raise ValueError
+        if path == "/login/index.php" and "testsession" in parse_qs(parts.query):
+            values = parse_qs(parts.query)["testsession"]
+            if (
+                method != "GET"
+                or len(values) != 1
+                or not values[0].isascii()
+                or not values[0].isdigit()
+                or int(values[0]) <= 0
+            ):
+                raise ValueError
         if method not in {"GET", "POST"} or (
             method == "POST" and path not in {"/login/index.php", "/lib/ajax/service.php"}
         ):
@@ -97,38 +154,55 @@ class PublicAdapter(HTTPAdapter):
 
 
 class HttpClient:
-    def __init__(self, cancel: Event | None = None):
+    def __init__(self, cancel: Event | None = None, limits=None):
         self.cancel = cancel or Event()
+        self.limits = limits or Limits()
         self.session = requests.Session()
         self.session.trust_env = False
         self.session.mount("https://", PublicAdapter(max_retries=0))
         self.session.headers.update(
-            {"User-Agent": "FADDownloader/0.0.1", "Accept-Language": "it,en;q=0.5"}
+            {"User-Agent": "FADDownloader/0.1.0", "Accept-Language": "it,en;q=0.5"}
         )
         self.last_request = 0.0
 
     def close(self):
+        event("network.session_closed", level=logging.DEBUG)
         self.session.close()
         self.session.cookies.clear()
 
-    def request(self, url, method="GET", **kwargs):
+    @monitored("network.request")
+    def request(self, url, method="GET", allow_logout=False, **kwargs):
         start = time.monotonic()
         redirects, retries = 0, 0
         if method == "POST" and urlsplit(url).path == "/lib/ajax/service.php":
             payload = kwargs.get("json", [])
-            if not payload or any(item.get("methodname") not in READ_METHODS for item in payload):
-                raise FadError("URL", "Metodo AJAX non consentito.")
+            validate_ajax_payload(payload)
         while True:
+            event(
+                "network.send",
+                level=logging.DEBUG,
+                method=method,
+                route=route_name(url),
+                query_keys=query_names(url),
+                attempt=retries + 1,
+                redirects=redirects,
+            )
             check_cancel(self.cancel)
-            validate_url(url, method)
+            validate_url(url, method, allow_logout)
             self.cancel.wait(max(0, 0.25 - (time.monotonic() - self.last_request)))
             check_cancel(self.cancel)
             try:
                 self.last_request = time.monotonic()
                 response = self.session.request(
-                    method, url, allow_redirects=False, stream=True, timeout=(10, 10), **kwargs
+                    method,
+                    url,
+                    allow_redirects=False,
+                    stream=True,
+                    timeout=(self.limits.timeout, self.limits.timeout),
+                    **kwargs,
                 )
-            except requests.RequestException:
+            except requests.RequestException as exc:
+                failure("network.connection_failed", exc)
                 if method == "GET" and retries < 2:
                     retries += 1
                     self.cancel.wait(retries)
@@ -136,11 +210,25 @@ class HttpClient:
                 raise FadError(
                     "NETWORK", "Connessione fallita. Controllare rete e certificato HTTPS."
                 ) from None
-            if time.monotonic() - start > 300:
+            if time.monotonic() - start > self.limits.request_seconds:
                 response.close()
                 raise FadError("LIMIT", "Tempo massimo della richiesta superato.")
+            event(
+                "network.response",
+                level=logging.DEBUG,
+                method=method,
+                route=route_name(url),
+                http_status=response.status_code,
+                elapsed_ms=round((time.monotonic() - start) * 1000),
+            )
             if response.status_code in {301, 302, 303, 307, 308}:
                 target = urljoin(url, response.headers.get("Location", ""))
+                event(
+                    "network.redirect",
+                    level=logging.DEBUG,
+                    route=route_name(target),
+                    http_status=response.status_code,
+                )
                 response.close()
                 redirects += 1
                 if redirects > 5:
@@ -160,22 +248,30 @@ class HttpClient:
                 if not delay.isdigit() or int(delay) > 30:
                     raise FadError("RATE_LIMITED", "Server occupato: riprovare più tardi.")
                 retries += 1
+                event("network.retry", attempt=retries + 1, http_status=response.status_code)
                 self.cancel.wait(int(delay))
                 continue
             if response.status_code >= 400:
-                code = "ACCESS_DENIED" if response.status_code in {401, 403} else "NETWORK"
+                code = (
+                    "AUTH_REQUIRED"
+                    if response.status_code == 401
+                    else "ACCESS_DENIED"
+                    if response.status_code == 403
+                    else "NETWORK"
+                )
                 status = response.status_code
                 response.close()
                 raise FadError(code, f"Risorsa non disponibile (HTTP {status}).")
             response.fad_started = start
             return response
 
-    def chunks(self, response, limit=2 * 1024**3):
+    def chunks(self, response, limit=None):
+        limit = self.limits.file_bytes if limit is None else limit
         size = 0
         try:
             for chunk in response.iter_content(64 * 1024):
                 check_cancel(self.cancel)
-                if time.monotonic() - response.fad_started > 300:
+                if time.monotonic() - response.fad_started > self.limits.request_seconds:
                     raise FadError("LIMIT", "Tempo massimo del trasferimento superato.")
                 size += len(chunk)
                 if size > limit:
@@ -184,8 +280,10 @@ class HttpClient:
                     yield chunk
         except requests.RequestException:
             raise FadError("NETWORK", "Trasferimento interrotto.") from None
+        finally:
+            event("network.stream_finished", level=logging.DEBUG, bytes=size)
 
     def document(self, url, method="GET", **kwargs):
         with self.request(url, method, **kwargs) as response:
-            content = b"".join(self.chunks(response, 20 * 1024**2))
+            content = b"".join(self.chunks(response, self.limits.document_bytes))
             return content, response.url

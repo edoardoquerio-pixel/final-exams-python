@@ -150,6 +150,10 @@ class SafeRoot:
                 os.replace(temp, name, src_dir_fd=fd, dst_dir_fd=fd)
                 if fd is not None:
                     os.fsync(fd)
+                from .observability import event
+                import logging
+
+                event("storage.atomic_write", level=logging.DEBUG, bytes=size)
                 return size, digest.hexdigest()
             finally:
                 try:
@@ -198,8 +202,14 @@ class SafeRoot:
                     except OSError:
                         raise FadError("LOCK", "Workspace già utilizzato.") from None
                 locked = True
+                from .observability import event
+                import logging
+
+                event("storage.lock_acquired", level=logging.DEBUG)
                 yield
             finally:
+                if locked:
+                    event("storage.lock_released", level=logging.DEBUG)
                 if locked and os.name != "posix":
                     os.lseek(handle, 0, 0)
                     msvcrt.locking(handle, msvcrt.LK_UNLCK, 1)
@@ -214,12 +224,22 @@ def load_manifest(root: SafeRoot, account: Account | None = None):
     try:
         if data["version"] != 1 or not isinstance(data["records"], dict):
             raise ValueError
+        if not isinstance(data.get("account"), str):
+            raise ValueError
         if account and data["account"] != account.key:
             raise FadError("ACCOUNT", "Questo workspace appartiene a un altro account.")
         for key, record in data["records"].items():
             if not re.fullmatch(r"[0-9a-f]{64}", key):
                 raise ValueError
             components(record["path"])
+            if any(
+                not isinstance(record.get(field, ""), str) for field in ("name", "course", "kind")
+            ):
+                raise ValueError
+            if "base" in record:
+                components(record["base"])
+            if not isinstance(record.get("assets", []), list):
+                raise ValueError
             for item in [record, *record.get("assets", [])]:
                 components(item["path"])
                 if (

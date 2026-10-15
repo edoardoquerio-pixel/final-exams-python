@@ -2,7 +2,7 @@
 
 Versione 1.1 - revisione del 14 ottobre 2026. Termine indicativo: fine novembre 2026.
 
-Questi documenti guidano lo sviluppo da zero del progetto descritto nel PDF. Sono piani: nessuna verifica di implementazione è già dichiarata superata. Il precedente `tool/download_fad.py` non è una dipendenza; eventuali confronti vanno documentati.
+Questi documenti guidano lo sviluppo da zero del progetto descritto nel PDF. La prima implementazione sperimentale è descritta nel [registro 0.0.1](12_VERSIONE_0_0_1.md), che distingue le prove superate dalle verifiche ancora da svolgere. Il precedente `tool/download_fad.py` non è una dipendenza; eventuali confronti vanno documentati.
 
 ## Ordine di lettura
 
@@ -17,6 +17,8 @@ Questi documenti guidano lo sviluppo da zero del progetto descritto nel PDF. Son
 9. [Registri operativi](09_REGISTRI.md)
 10. [Matrice requisiti, fasi e test](10_TRACCIABILITA.md)
 11. [Esito della revisione e questioni aperte](11_REVISIONE.md)
+12. [Implementazione e collaudo della versione 0.0.1](12_VERSIONE_0_0_1.md)
+13. [Versione 0.1.0 e copertura dei requisiti](13_VERSIONE_0_1_0.md)
 
 ## Regole comuni
 
@@ -30,7 +32,7 @@ Questi documenti guidano lo sviluppo da zero del progetto descritto nel PDF. Son
 
 ## Stato iniziale
 
-Tutte le fasi sono **da eseguire**. Il PDF rimane la proposta da presentare; questa cartella contiene il piano tecnico interno. Le variazioni di ambito devono essere registrate e, quando necessario, riportate nella proposta.
+È disponibile una versione sperimentale in `app/`. Le fasi del piano finale rimangono aperte fino al superamento dei rispettivi criteri; lo stato effettivo è nel registro 0.0.1. Il PDF rimane la proposta da presentare; questa cartella contiene il piano tecnico interno.
 
 La revisione documentale 1.1 è completata; non equivale a validazione del software o della compatibilità Moodle. Le scelte quantitative sono obiettivi iniziali da misurare. Non si promette supporto universale a temi Moodle, plugin quiz o distribuzioni Linux.
 

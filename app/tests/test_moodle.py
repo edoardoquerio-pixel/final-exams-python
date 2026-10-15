@@ -45,3 +45,22 @@ def test_quiz_only_finished_attempts():
     result = moodle.expand(course, quiz)
     assert len(result) == 1
     assert "attempt=2" in result[0].url
+
+
+def test_quiz_identity_independent_of_pagination():
+    moodle = Moodle(Mock(cancel=Event()))
+    course = Course(1, "C", ORIGIN + "/course/view.php?id=1")
+    first = moodle.resource(
+        course, 1, "Quiz", "quiz_review", ORIGIN + "/mod/quiz/review.php?attempt=2&page=0"
+    )
+    second = moodle.resource(
+        course, 1, "Quiz", "quiz_review", ORIGIN + "/mod/quiz/review.php?attempt=2&showall=1"
+    )
+    assert first.id == second.id
+
+
+def test_folder_subdirectories():
+    assert (
+        Moodle.folder_path(ORIGIN + "/pluginfile.php/5/mod_folder/content/0/uno/due/file.txt")
+        == "uno/due"
+    )

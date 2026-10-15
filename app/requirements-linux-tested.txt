@@ -3,7 +3,6 @@ certifi==2026.7.22
 cffi==2.1.1
 charset-normalizer==3.5.2
 cryptography==50.0.2
-fad-downloader @ file:///mnt/c/Users/edoardo.querio/Desktop/Materie/10_Programmazione_Python/Final%20exams%20project/app/dist/fad_downloader-0.0.1-py3-none-any.whl#sha256=b5e935b67ba58ecde05fe710062cf2aaf12e3fb309c2298d03b0b37996c862b9
 idna==3.20
 jaraco.classes==3.4.0
 jaraco.context==6.1.2
@@ -13,6 +12,7 @@ keyring==25.7.0
 more-itertools==11.2.0
 nh3==0.3.7
 pycparser==3.11
+python-dotenv==1.2.4
 requests==2.34.2
 SecretStorage==3.5.0
 soupsieve==3.0.3

@@ -8,4 +8,9 @@ build/
 .coverage
 htmlcov/
 .env
+.env.*
+!.env.example
 demo-workspace/
+logs/
+*.jsonl
+*.jsonl.*
