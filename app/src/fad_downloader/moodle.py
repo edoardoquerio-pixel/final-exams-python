@@ -448,7 +448,19 @@ class Moodle:
             soup, base = self.page(resource.url)
             result = []
             for row in soup.select("table tr"):
-                state = row.select_one(".state, .cell.c1")
+                state = row.select_one(".state")
+                table = row.find_parent("table")
+                headers = table.select("thead tr th") if table else []
+                if not headers and table:
+                    header_row = table.find("tr")
+                    headers = header_row.find_all("th", recursive=False) if header_row else []
+                state_index = next((i for i, header in enumerate(headers)
+                                    if header.get_text(" ", strip=True).casefold() in {"stato", "state", "status"}), None)
+                cells = row.find_all("td", recursive=False)
+                if state is None and state_index is not None and state_index < len(cells):
+                    state = cells[state_index]
+                if state is None and not headers:
+                    state = row.select_one(".cell.c1")
                 text = state.get_text(" ", strip=True).casefold() if state else ""
                 if not any(
                     word in text for word in ("finished", "terminato", "completato", "concluso")
@@ -527,14 +539,23 @@ class Moodle:
         return "/".join(clean_name(p) for p in parts[index + 3 : -1] if p)
 
     @monitored("scan.catalog")
-    def scan(self, emit=lambda text: None):
+    def scan(self, emit=lambda text: None, progress=lambda catalog: None):
         self.warnings = []
         self.sections = {}
         self.snap_complete = set()
         catalog = Catalog(courses=self.courses())
-        for course in catalog.courses:
+        def publish():
+            # Snapshot: the GUI must never iterate lists being mutated by this worker.
+            progress(Catalog(
+                courses=list(catalog.courses),
+                resources=list(catalog.resources),
+                sections=sorted(self.sections.values(), key=lambda s: (s.course_id, s.index)),
+            ))
+
+        publish()
+        for index, course in enumerate(catalog.courses, 1):
             check_cancel(self.http.cancel)
-            emit("Scansione: " + course.name)
+            emit(f"Scansione corso {index}/{len(catalog.courses)}: " + course.name)
             try:
                 for resource in self.activities(course):
                     try:
@@ -555,6 +576,7 @@ class Moodle:
                 if exc.code in {"CANCELLED", "AUTH_REQUIRED"}:
                     raise
                 self.warnings.append(f"Corso {course.id}: {exc}")
+            publish()
         catalog.resources = list({r.id: r for r in catalog.resources}.values())
         limit = getattr(getattr(self.http, "limits", None), "pages", 10000)
         if len(catalog.resources) > limit:

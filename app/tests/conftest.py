@@ -9,6 +9,7 @@ def isolated_preferences(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path / "config"))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     from fad_downloader.observability import configure
 
     configure(enabled=False)

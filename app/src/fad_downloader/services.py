@@ -102,8 +102,9 @@ def load_settings(workspace):
 
 
 class Downloader:
-    def __init__(self, http, account, reauthenticate=None):
+    def __init__(self, http, account, reauthenticate=None, archive=None, user_session=None):
         self.http, self.account = http, account
+        self.archive, self.user_session = archive, user_session
         self.limits = getattr(http, "limits", Limits())
         self.reauthenticate = reauthenticate
         self.total_bytes = 0
@@ -206,6 +207,21 @@ class Downloader:
         self.total_bytes = 0
         with root.lock():
             manifest = load_manifest(root, self.account)
+            if self.archive:
+                user_id = self.archive.validate_session(self.user_session)
+                owner = manifest.get("db_user_id")
+                if owner is not None and (
+                    owner != user_id or manifest.get("db_identity") != self.archive.identity
+                ):
+                    raise FadError(
+                        "USER",
+                        "Workspace associato a un altro utente DB: scegliere una directory diversa.",
+                    )
+                manifest["db_user_id"] = user_id
+                manifest["db_identity"] = self.archive.identity
+            run_id = (
+                self.archive.start_run(self.user_session, self.account) if self.archive else None
+            )
             from .state import resource_data
 
             root.write_json(
@@ -225,6 +241,7 @@ class Downloader:
             reauthenticated = False
             for task in tasks:
                 r = task.resource
+                record = None
                 event("download.task_start", resource_id=r.id[:12], kind=r.kind)
                 emit("Download: " + r.name)
                 try:
@@ -294,6 +311,32 @@ class Downloader:
                             message="Errore filesystem: verificare spazio e permessi.",
                         )
                     )
+                if self.archive:
+                    try:
+                        archived = (
+                            record
+                            if results[-1].status in {"scaricato", "aggiornato", "invariato"}
+                            else None
+                        )
+                        self.archive.record(
+                            self.user_session,
+                            run_id,
+                            r,
+                            results[-1],
+                            root,
+                            archived,
+                            self.http.cancel if archived else None,
+                        )
+                    except (FadError, OSError) as exc:
+                        failure("db.archive_failed", exc)
+                        results[-1].status = (
+                            "annullato"
+                            if isinstance(exc, FadError) and exc.code == "CANCELLED"
+                            else "archiviazione_fallita"
+                        )
+                        results[
+                            -1
+                        ].message = "File locale conservato; archiviazione BLOB non completata. Ritentare il download."
             report = {
                 "version": 1,
                 "created": datetime.now(timezone.utc).isoformat(),
@@ -312,7 +355,9 @@ class Downloader:
                 if r.status in {"scaricato", "aggiornato", "invariato"}
             )
             failures = {
-                r.resource_id for r in results if r.status in {"fallito", "annullato", "conflitto"}
+                r.resource_id
+                for r in results
+                if r.status in {"fallito", "annullato", "conflitto", "archiviazione_fallita"}
             }
             root.write_json(
                 ".fad/pending.json",
@@ -326,6 +371,9 @@ class Downloader:
                     ],
                 },
             )
+            if self.archive:
+                self.archive.finish_run(self.user_session, run_id, report["partial"])
+                report["db_run_id"] = run_id
             root.write_json(".fad/report.json", report)
             root.write(".fad/index.html", [index_html(manifest, root)])
             event(
@@ -386,6 +434,26 @@ def verify(workspace):
                 issues.append(item["path"] + ": non leggibile")
     event("integrity.result", files=checked, issues=len(issues))
     return {"checked": checked, "issues": issues}
+
+
+def compare_catalog(catalog, workspace, account):
+    """Confronta le risorse scaricabili della FAD con il manifest e i file presenti."""
+    root = SafeRoot(workspace)
+    manifest = load_manifest(root, account)
+    result = verify(workspace)
+    missing = []
+    for resource in catalog.resources:
+        if resource.kind not in SUPPORTED:
+            continue
+        record = manifest["records"].get(resource.id)
+        if not record:
+            missing.append(resource.name)
+            continue
+        if any(root.fingerprint(item["path"]) is None
+               for item in [record, *record.get("assets", [])]):
+            missing.append(resource.name)
+    result["missing"] = missing
+    return result
 
 
 def alternate_tasks(workspace, account):

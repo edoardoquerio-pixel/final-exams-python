@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0 — 15 ottobre 2026
+
+- Archivio SQLite con utenti applicativi ordinari, senza amministratore, separati dagli account FAD.
+- Password DB con scrypt, sessioni a scadenza, storico e BLOB filtrati per proprietario.
+- Archiviazione automatica dei file principali e degli allegati in blocchi BLOB da 1 MiB.
+- Archivio grafico, ripristino dei BLOB e importazione dei workspace delle versioni precedenti.
+- Report personale PDF con ReportLab, conteggi, tabelle multipagina e intestazioni ripetute.
+- Due utenti demo in database separato, nuovi comandi CLI e test di separazione dei dati.
+
 ### Credenziali persistenti nel `.env` — 14 ottobre 2026
 
 GUI precompilata con username e password mascherata dal file; salvataggio automatico

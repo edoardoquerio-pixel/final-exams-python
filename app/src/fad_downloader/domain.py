@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from threading import Event
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import hashlib
+import re
 
 ORIGIN = "https://fad.its-ictpiemonte.it"
 SUPPORTED_RESOURCE_KINDS = {"file", "page", "book", "quiz_review"}
@@ -36,6 +37,14 @@ def identifier(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def course_display_name(value: str) -> str:
+    """Omette il codice della classe dai nomi locali, anche nei cataloghi salvati."""
+    cleaned = re.sub(r"(?<!\w)D68444-15-2025(?!\w)", "", value)
+    if cleaned == value:
+        return value
+    return re.sub(r"\s+", " ", cleaned).strip(" \t-–—_:|/()[]") or value
+
+
 @dataclass(frozen=True)
 class Account:
     origin: str
@@ -51,6 +60,9 @@ class Course:
     id: int
     name: str
     url: str
+
+    def __post_init__(self):
+        object.__setattr__(self, "name", course_display_name(self.name))
 
 
 @dataclass(frozen=True)
@@ -78,6 +90,9 @@ class Resource:
     activity_name: str = ""
     attempt_id: str = ""
     section_id: str = ""
+
+    def __post_init__(self):
+        object.__setattr__(self, "course", course_display_name(self.course))
 
 
 @dataclass

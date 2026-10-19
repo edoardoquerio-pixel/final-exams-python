@@ -19,6 +19,7 @@ Questi documenti guidano lo sviluppo da zero del progetto descritto nel PDF. La 
 11. [Esito della revisione e questioni aperte](11_REVISIONE.md)
 12. [Implementazione e collaudo della versione 0.0.1](12_VERSIONE_0_0_1.md)
 13. [Versione 0.1.0 e copertura dei requisiti](13_VERSIONE_0_1_0.md)
+14. [SQLite, utenti DB e report PDF — versione 0.2.0](14_DATABASE_UTENTI_PDF.md)
 
 ## Regole comuni
 

@@ -8,6 +8,31 @@ from fad_downloader.domain import Course, FadError, ORIGIN
 from fad_downloader.moodle import Moodle, soup_document
 
 
+def test_scan_publishes_courses_before_loading_and_independent_snapshots():
+    from fad_downloader.demo import catalog
+    from fad_downloader.domain import Limits
+
+    demo = catalog()
+    moodle = Moodle(Mock(cancel=Event(), limits=Limits()))
+    moodle.courses = Mock(return_value=demo.courses)
+    snapshots = []
+
+    def activities(course):
+        assert len(snapshots) == 1
+        assert snapshots[0].courses == demo.courses
+        assert not snapshots[0].resources
+        return demo.resources
+
+    moodle.activities = activities
+    moodle.expand = lambda course, resource: [resource]
+    result = moodle.scan(progress=snapshots.append)
+    assert len(snapshots) == 2
+    assert not snapshots[0].resources
+    assert snapshots[1].resources == result.resources == demo.resources
+    result.resources.clear()
+    assert len(snapshots[1].resources) == 3
+
+
 def test_login_html_is_not_authenticated():
     with pytest.raises(FadError, match="Sessione"):
         soup_document('<html><input name="logintoken" value="x"></html>', ORIGIN + "/my/")
@@ -57,6 +82,25 @@ def test_quiz_identity_independent_of_pagination():
         course, 1, "Quiz", "quiz_review", ORIGIN + "/mod/quiz/review.php?attempt=2&showall=1"
     )
     assert first.id == second.id
+
+
+@pytest.mark.parametrize("attempt_column", [True, False])
+def test_quiz_state_column_follows_table_header(attempt_column):
+    moodle = Moodle(Mock(cancel=Event()))
+    prefix = "<th>Tentativo</th>" if attempt_column else ""
+    cell = '<td class="cell c0">1</td>' if attempt_column else ""
+    markup = (
+        f"<table><thead><tr>{prefix}<th>Stato</th><th>Valutazione</th><th>Revisione</th></tr></thead>"
+        f"<tbody><tr>{cell}<td>Terminato</td><td>30</td>"
+        '<td><a href="/mod/quiz/review.php?attempt=2">Revisione</a></td></tr>'
+        f"<tr>{cell}<td>In corso</td><td></td>"
+        '<td><a href="/mod/quiz/review.php?attempt=3">Revisione</a></td></tr></tbody></table>'
+    )
+    moodle.page = Mock(return_value=(BeautifulSoup(markup, "html.parser"), ORIGIN))
+    course = Course(1, "Corso", ORIGIN + "/course/view.php?id=1")
+    quiz = moodle.resource(course, 1, "Verifica", "quiz", ORIGIN + "/mod/quiz/view.php?id=1")
+    result = moodle.expand(course, quiz)
+    assert [r.attempt_id for r in result] == ["2"]
 
 
 def test_folder_subdirectories():

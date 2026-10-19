@@ -11,6 +11,10 @@ Espandere una riga per fase all'avvio. Stati: da eseguire, in corso, verificata,
 
 ## Scheda task
 
+Versione 0.2.0 del 15 ottobre: [SQLite, utenti DB e PDF](14_DATABASE_UTENTI_PDF.md).
+R26-R28 implementati e provati su dati sintetici; i gate di compatibilità Moodle già aperti
+restano invariati. Due utenti DB ordinari, contenuti BLOB, report per proprietario e importazione locale.
+
 Aggiornamento 0.1.0: [copertura dei requisiti e prove effettuate](13_VERSIONE_0_1_0.md).
 Implementazione del flusso completo, test offline e Ubuntu verificati; login reale rifiutato,
 gate F0A e validazione finale ancora aperti.

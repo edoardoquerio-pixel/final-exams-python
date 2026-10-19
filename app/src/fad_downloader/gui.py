@@ -12,6 +12,7 @@ from .observability import event, failure, span
 
 from .demo import DEMO_ACCOUNT, DemoHttp, catalog as demo_catalog
 from .domain import Catalog, FadError, Limits, Naming
+from .database import Archive
 from .state import (
     backup_state,
     load_catalog,
@@ -24,11 +25,12 @@ from .state import (
 )
 from .moodle import Moodle
 from .network import HttpClient
-from .services import Downloader, load_settings, plan, save_settings, verify
+from .theme import apply_theme, style_text
+from .services import Downloader, load_settings, plan, save_settings
 
 
 class App:
-    def __init__(self, window, demo=False, env_file=None):
+    def __init__(self, window, demo=False, env_file=None, database=None):
         self.window, self.demo = window, demo
         from .env_config import default_env_path
 
@@ -50,10 +52,17 @@ class App:
         self.tasks = []
         self.plan_revision = 0
         self.last_failed = set()
+        self.archive = Archive(database, demo=demo)
+        self.db_session = self.archive.demo_session() if demo else None
+        self.db_dialogs = []
+        self.db_label = tk.StringVar(
+            value="Utente DB: " + (self.db_session.username if self.db_session else "nessuno")
+        )
         self.buttons = []
-        window.title("FAD Downloader 0.1.0" + (" - Demo offline" if demo else ""))
+        window.title("FAD Downloader 0.2.0" + (" - Demo offline" if demo else ""))
         window.geometry("1220x860")
         window.minsize(1050, 740)
+        apply_theme(window)
         self.username, self.password = tk.StringVar(), tk.StringVar()
         if not demo:
             from .env_config import read_credentials
@@ -111,27 +120,109 @@ class App:
             self.scanned(demo_catalog())
 
     def button(self, parent, text, command):
-        button = ttk.Button(parent, text=text, command=command)
+        button = ttk.Button(parent, text=text, command=command,
+                            style="Primary.TButton" if text in {"Scarica", "Accedi"} else "TButton")
         button.pack(side="left", padx=3, pady=3)
         self.buttons.append(button)
         return button
 
     def build(self):
-        shell = ttk.Frame(self.window, padding=12)
+        shell = ttk.Frame(self.window, padding=24)
         shell.pack(fill="both", expand=True)
-        login = ttk.LabelFrame(shell, text="1. Accesso", padding=7)
-        login.pack(fill="x")
-        ttk.Label(login, text="Username").pack(side="left")
-        ttk.Entry(login, textvariable=self.username, width=20).pack(side="left", padx=5)
-        ttk.Label(login, text="Password").pack(side="left")
-        ttk.Entry(login, textvariable=self.password, show="•", width=20).pack(side="left", padx=5)
-        ttk.Label(login, text="Salvataggio automatico in .env").pack(side="left", padx=5)
-        self.button(login, "Accedi", self.login)
-        self.button(login, "Carica .env", self.reload_credentials)
-        self.button(login, "Esci account", self.logout)
-        self.button(login, "Dimentica password", self.forget)
-        paths = ttk.LabelFrame(shell, text="2. Cartelle e nomenclatura", padding=7)
-        paths.pack(fill="x", pady=8)
+        header = ttk.Frame(shell)
+        header.pack(fill="x", pady=(0, 20))
+        ttk.Label(header, text="FAD Downloader", style="Title.TLabel").pack(side="left")
+        ttk.Label(header, text="DEMO OFFLINE" if self.demo else "IL TUO ARCHIVIO DIDATTICO",
+                  style="Badge.TLabel").pack(side="right")
+        ttk.Label(shell, text="Corsi, materiali e test. Tutto nel tuo spazio di studio.",
+                  style="Subtitle.TLabel").pack(anchor="w", pady=(0, 18))
+        menu = ttk.Frame(shell)
+        menu.pack(fill="x", pady=(0, 24))
+        self.section_popups = {}
+
+        def section(title):
+            popup = tk.Toplevel(self.window)
+            popup.withdraw()
+            popup.title(title)
+            popup.transient(self.window)
+            popup.overrideredirect(True)
+            popup.configure(highlightthickness=1, highlightbackground="#D8E2ED")
+            popup.resizable(True, False)
+            popup.protocol("WM_DELETE_WINDOW", popup.withdraw)
+            popup.bind("<Escape>", lambda _: popup.withdraw())
+            self.section_popups[title] = popup
+
+            def position(event=None):
+                if event is not None and event.widget is not self.window:
+                    return
+                if popup.state() == "withdrawn":
+                    return
+                x = trigger.winfo_rootx()
+                y = trigger.winfo_rooty() + trigger.winfo_height() + 6
+                width = popup.winfo_reqwidth()
+                x = max(0, min(x, popup.winfo_screenwidth() - width - 12))
+                popup.geometry(f"+{x}+{y}")
+
+            def show():
+                if popup.state() != "withdrawn":
+                    popup.withdraw()
+                    return
+                for other in self.section_popups.values():
+                    other.withdraw()
+                popup.deiconify()
+                popup.update_idletasks()
+                position()
+                popup.lift()
+                popup.focus_set()
+
+            trigger = ttk.Button(menu, text=title, command=show)
+            trigger.pack(side="left", padx=3)
+            self.window.bind("<Configure>", position, add="+")
+
+            def dismiss(event):
+                if event.widget is not trigger:
+                    popup.withdraw()
+
+            self.window.bind("<Button-1>", dismiss, add="+")
+            self.window.bind("<Escape>", lambda _: popup.withdraw(), add="+")
+            self.window.bind("<Unmap>", lambda e: popup.withdraw()
+                             if e.widget is self.window else None, add="+")
+            return popup
+
+        users = ttk.LabelFrame(
+            section("Utenti database SQLite"),
+            text="Utenti database SQLite (nessun amministratore)", padding=10
+        )
+        users.pack(fill="both", expand=True, padx=20, pady=20)
+        ttk.Label(users, textvariable=self.db_label, style="Badge.TLabel").pack(anchor="w", pady=(8, 16))
+        user_access = ttk.Frame(users)
+        user_access.pack(anchor="w")
+        self.button(user_access, "Accedi DB", lambda: self.db_login(False))
+        self.button(user_access, "Registra utente DB", lambda: self.db_login(True))
+        self.button(user_access, "Esci DB", self.db_logout)
+        archive_actions = ttk.Frame(users)
+        archive_actions.pack(anchor="w", pady=(8, 0))
+        self.button(archive_actions, "Archivio BLOB", self.db_history)
+        self.button(archive_actions, "Report PDF", self.db_pdf)
+        self.button(archive_actions, "Importa workspace", self.db_import)
+        login = ttk.LabelFrame(section("Accesso FAD"), text="Accesso FAD", padding=10)
+        login.pack(fill="both", expand=True, padx=20, pady=20)
+        for label, variable, masked in (("Username", self.username, False), ("Password", self.password, True)):
+            ttk.Label(login, text=label).pack(anchor="w", pady=(12, 6))
+            ttk.Entry(login, textvariable=variable, show="•" if masked else "", width=46).pack(fill="x")
+        ttk.Label(login, text="Salvataggio automatico in .env", style="Subtitle.TLabel").pack(anchor="w", pady=12)
+        login_actions = ttk.Frame(login)
+        login_actions.pack(fill="x")
+        self.button(login_actions, "Accedi", self.login)
+        self.button(login_actions, "Carica .env", self.reload_credentials)
+        session_actions = ttk.Frame(login)
+        session_actions.pack(fill="x", pady=(8, 0))
+        self.button(session_actions, "Esci account", self.logout)
+        self.button(session_actions, "Dimentica password", self.forget)
+        paths = ttk.LabelFrame(
+            section("Cartelle e nomenclatura"), text="Cartelle e nomenclatura", padding=10
+        )
+        paths.pack(fill="both", expand=True, padx=20, pady=20)
         row = ttk.Frame(paths)
         row.pack(fill="x")
         ttk.Entry(row, textvariable=self.workspace).pack(side="left", fill="x", expand=True)
@@ -157,6 +248,7 @@ class App:
             text="Segnaposto: {course_id}, {course_name}, {section_index}, {section_name}, {activity_id}, {activity_name}, {quiz_id}, {attempt_id}.",
         ).pack(anchor="w")
         actions = ttk.Frame(shell)
+        ttk.Label(shell, text="La tua raccolta", style="Section.TLabel").pack(anchor="w", pady=(0, 12))
         actions.pack(fill="x")
         self.button(actions, "Scansiona FAD", self.scan)
         self.button(actions, "Seleziona tutto", self.select_all)
@@ -177,7 +269,7 @@ class App:
         notebook.add(catalog_frame, text="Corsi e contenuti")
         self.tree = ttk.Treeview(catalog_frame, columns=("type",), selectmode="extended")
         self.tree.heading(
-            "#0", text="Seleziona corsi, sezioni o attività (Ctrl/Shift per selezione multipla)"
+            "#0", text="Corsi, sezioni e attività"
         )
         self.tree.heading("type", text="Tipo")
         self.tree.column("type", width=190, stretch=False)
@@ -188,27 +280,20 @@ class App:
         self.preview = tk.Text(notebook, wrap="word", state="disabled", font=("TkFixedFont", 10))
         notebook.add(self.preview, text="Anteprima destinazioni")
         self.log = tk.Text(notebook, wrap="word", state="disabled")
+        style_text(self.preview)
+        style_text(self.log)
         notebook.add(self.log, text="Messaggi e report")
         controls = ttk.Frame(shell)
-        controls.pack(fill="x")
-        self.button(controls, "Anteprima", self.preview_plan)
-        self.button(controls, "Scarica piano", self.download)
-        self.button(controls, "Ritenta falliti", self.retry)
+        controls.pack(fill="x", pady=(12, 4))
+        self.button(controls, "Scarica", self.download)
         ttk.Button(controls, text="Annulla", command=self.cancel_work).pack(side="left", padx=3)
         self.button(controls, "Verifica file", self.verify_files)
-        self.button(controls, "Apri indice locale", self.open_index)
-        local = ttk.Frame(shell)
-        local.pack(fill="x")
-        self.button(local, "Apri catalogo offline", self.open_catalog)
-        self.button(local, "Leggi report", self.read_report)
-        self.button(local, "Recupera piano", self.resume_plan)
-        self.button(local, "Copia conflitti", self.copy_conflicts)
-        self.button(local, "Backup stato", self.backup)
-        self.button(local, "Ripristina backup", self.restore)
-        self.button(local, "Apri log", self.open_log)
+        ttk.Label(controls, text="Nessuna selezione? Scarica l’intera raccolta.",
+                  style="Subtitle.TLabel").pack(side="right", padx=8)
         self.progress = ttk.Progressbar(shell, mode="indeterminate")
         self.progress.pack(fill="x", pady=6)
-        ttk.Label(shell, textvariable=self.status).pack(anchor="w")
+        ttk.Label(shell, textvariable=self.status, style="Subtitle.TLabel",
+                  wraplength=1100).pack(anchor="w", pady=(6, 0))
 
     def naming(self):
         return Naming(
@@ -260,8 +345,12 @@ class App:
                 text = self.messages.get_nowait()
             except Empty:
                 break
-            self.append(text)
-            self.status.set(text)
+            if isinstance(text, Catalog):
+                self.catalog = text
+                self.populate()
+            else:
+                self.append(text)
+                self.status.set(text)
         if self.future and self.future.done():
             future, finish = self.future, self.finish
             self.future = None
@@ -289,12 +378,22 @@ class App:
         if self.closing and not self.future:
             if self.client:
                 self.client.close()
+            if self.db_session:
+                try:
+                    self.archive.logout(self.db_session)
+                except FadError as exc:
+                    failure("db.logout_failed", exc)
             self.pool.shutdown(wait=False)
             self.window.destroy()
             return
         self.window.after(100, self.poll)
 
     def login(self):
+        if self.demo:
+            self.status.set(
+                "Modalità demo offline: avvia senza --demo per accedere alla FAD reale."
+            )
+            return
         username, password = (
             self.username.get().strip(),
             self.password.get(),
@@ -409,7 +508,7 @@ class App:
         workspace, account = Path(self.workspace.get()), self.account
 
         def work():
-            catalog = demo_catalog() if self.demo else self.moodle.scan(self.emit)
+            catalog = demo_catalog() if self.demo else self.moodle.scan(self.emit, self.emit)
             changes = save_catalog(workspace, account, catalog)
             return catalog, changes
 
@@ -606,24 +705,32 @@ class App:
         self.start(lambda: plan(selected, workspace, account, naming, mapping), finish)
 
     def download(self):
+        if not self.db_session:
+            self.status.set("Accedi o registra un utente DB prima di scaricare.")
+            return
         if not self.account or not self.client:
             self.status.set(
                 "Accedi prima di scaricare; il catalogo offline è consultabile senza login."
             )
             return
-        if not self.tasks:
-            self.status.set("Genera prima l'anteprima aggiornata.")
+        resources = self.selected() if self.tree.selection() else list(self.catalog.resources)
+        if not resources:
+            self.status.set("Nessuna risorsa da scaricare. Scansiona la FAD.")
             return
-        tasks, client, account, workspace = (
-            list(self.tasks),
+        client, account, workspace = (
             self.client,
             self.account,
-            self.planned_workspace,
+            Path(self.workspace.get()),
         )
+        naming, mapping = self.naming(), dict(self.mapping)
         self.start(
-            lambda: Downloader(client, account, None if self.demo else self.reauthenticate).run(
-                tasks, workspace, self.emit
-            ),
+            lambda: Downloader(
+                client,
+                account,
+                None if self.demo else self.reauthenticate,
+                self.archive,
+                self.db_session,
+            ).run(plan(resources, workspace, account, naming, mapping), workspace, self.emit),
             self.downloaded,
         )
 
@@ -631,7 +738,7 @@ class App:
         self.last_failed = {
             r["resource_id"]
             for r in report["results"]
-            if r["status"] in {"fallito", "annullato", "conflitto"}
+            if r["status"] in {"fallito", "annullato", "conflitto", "archiviazione_fallita"}
         }
         for result in report["results"]:
             self.append(f"{result['status']}: {result['name']} {result['message']}")
@@ -643,16 +750,36 @@ class App:
         self.preview_plan()
 
     def verify_files(self):
+        if not self.account:
+            self.status.set("Accedi alla FAD prima di confrontare i file locali.")
+            return
         workspace = Path(self.workspace.get())
+        account = self.account
 
-        def finish(result):
+        def work():
+            from .services import compare_catalog
+
+            catalog = demo_catalog() if self.demo else self.moodle.scan(self.emit, self.emit)
+            changes = save_catalog(workspace, account, catalog)
+            result = compare_catalog(catalog, workspace, account)
+            result["changed"] = changes.get("changed", [])
+            return catalog, changes, result
+
+        def finish(value):
+            catalog, changes, result = value
+            self.scanned((catalog, changes))
             self.status.set(
-                f"Verificati {result['checked']} file; problemi: {len(result['issues'])}."
+                f"Verificati {result['checked']} file; problemi: {len(result['issues'])}. "
+                f"Risorse mancanti: {len(result['missing'])}; aggiornate sulla FAD: {len(result['changed'])}."
             )
+            for name in result["missing"]:
+                self.append("Da scaricare: " + name)
             for issue in result["issues"]:
                 self.append(issue)
+            for warning in catalog.warnings:
+                self.append("Verifica parziale: " + warning)
 
-        self.start(lambda: verify(workspace), finish)
+        self.start(work, finish)
 
     def open_index(self):
         path = Path(self.workspace.get()) / ".fad" / "index.html"
@@ -796,6 +923,181 @@ class App:
         else:
             self.status.set("Log su file disabilitati.")
 
+    def db_login(self, register=False):
+        username = simpledialog.askstring(
+            "Registrazione DB" if register else "Accesso DB",
+            "Nome utente DB (distinto dall'account FAD).\n"
+            "3-40 lettere a-z, numeri o . _ -, senza spazi né accenti.\n"
+            "Esempio: edoardo.querio",
+            parent=self.window,
+        )
+        if not username:
+            return
+        password = simpledialog.askstring(
+            "Utente DB", "Password utente DB (da 8 a 1024 caratteri):",
+            show="*", parent=self.window,
+        )
+        if not password:
+            return
+        if register and password != simpledialog.askstring(
+            "Utente DB", "Ripeti password:", show="*", parent=self.window
+        ):
+            self.status.set("Le password non coincidono.")
+            return
+        previous = self.db_session
+
+        def work():
+            if register:
+                self.archive.register(username, password)
+            session = self.archive.login(username, password)
+            if previous:
+                self.archive.logout(previous)
+            return session
+
+        def finish(session):
+            self.close_db_views()
+            self.db_session = session
+            self.db_label.set("Utente DB: " + session.username)
+            base = Path.home() / ("FAD-demo" if self.demo else "FAD")
+            self.workspace.set(str(base / "utenti" / str(session.user_id)))
+            self.catalog, self.mapping = Catalog(), {}
+            self.populate()
+            self.status.set("Utente DB connesso. Scansiona FAD o apri il tuo archivio.")
+
+        self.start(work, finish)
+
+    def db_logout(self):
+        if not self.db_session:
+            return
+        session = self.db_session
+
+        def finish(_):
+            self.close_db_views()
+            self.db_session = None
+            self.db_label.set("Utente DB: nessuno")
+            self.invalidate()
+            self.status.set("Utente DB disconnesso. Il login FAD resta separato.")
+
+        self.start(lambda: self.archive.logout(session), finish)
+
+    def db_history(self):
+        if not self.db_session:
+            self.status.set("Accedi come utente DB.")
+            return
+        session = self.db_session
+
+        def finish(rows):
+            dialog = tk.Toplevel(self.window)
+            self.db_dialogs.append(dialog)
+            dialog.title("Archivio BLOB - " + session.username)
+            dialog.geometry("1000x500")
+            tree = ttk.Treeview(dialog, columns=("course", "status", "files"), show="tree headings")
+            tree.heading("#0", text="Risorsa scaricata")
+            for key, title in (("course", "Corso"), ("status", "Esito"), ("files", "File BLOB")):
+                tree.heading(key, text=title)
+            tree.pack(fill="both", expand=True)
+            for row in rows:
+                tree.insert(
+                    "",
+                    "end",
+                    iid=str(row["id"]),
+                    text=row["name"],
+                    values=(row["course"], row["status"], row["file_count"]),
+                )
+
+            def restore():
+                selected = tree.selection()
+                if not selected:
+                    return
+                download_id = int(selected[0])
+
+                def choose(files):
+                    if not files:
+                        self.status.set("Nessun BLOB per questa operazione.")
+                        return
+                    picker = tk.Toplevel(dialog)
+                    self.db_dialogs.append(picker)
+                    picker.title("File BLOB della risorsa")
+                    picker.geometry("800x350")
+                    items = ttk.Treeview(picker, columns=("bytes",), show="tree headings")
+                    items.heading("#0", text="File principale e allegati")
+                    items.heading("bytes", text="Byte")
+                    items.pack(fill="both", expand=True)
+                    for index, item in enumerate(files):
+                        items.insert(
+                            "",
+                            "end",
+                            iid=str(index),
+                            text=item["relative_path"],
+                            values=(item["size"],),
+                        )
+
+                    def save():
+                        choice = items.selection()
+                        if not choice:
+                            return
+                        item = files[int(choice[0])]
+                        destination = filedialog.asksaveasfilename(
+                            parent=picker,
+                            title="Ripristina BLOB (scegliere un nuovo file)",
+                            initialfile=Path(item["relative_path"]).name,
+                        )
+                        if destination:
+                            self.start(
+                                lambda: self.archive.restore(
+                                    session, item["object_id"], Path(destination)
+                                ),
+                                lambda _: self.status.set("Oggetto ripristinato dal BLOB."),
+                            )
+
+                    ttk.Button(picker, text="Ripristina file selezionato", command=save).pack(
+                        pady=6
+                    )
+
+                self.start(lambda: self.archive.files(session, download_id), choose)
+
+            ttk.Button(dialog, text="File BLOB e ripristino", command=restore).pack(pady=8)
+            ttk.Label(
+                dialog, text="I file restano nel database anche se cancellati dal workspace."
+            ).pack()
+
+        self.start(lambda: self.archive.history(session), finish)
+
+    def db_import(self):
+        if not self.db_session:
+            self.status.set("Accedi come utente DB prima di importare.")
+            return
+        session, workspace = self.db_session, Path(self.workspace.get())
+        self.start(
+            lambda: self.archive.import_workspace(session, workspace),
+            lambda r: self.status.set(f"BLOB importati: {r['imported']}; problemi: {r['failed']}."),
+        )
+
+    def db_pdf(self):
+        if not self.db_session:
+            self.status.set("Accedi come utente DB per creare il tuo report.")
+            return
+        destination = filedialog.asksaveasfilename(
+            title="Report personale download",
+            defaultextension=".pdf",
+            initialfile="report_download.pdf",
+            filetypes=[("PDF", "*.pdf")],
+        )
+        if destination:
+            from .pdf_reports import export_user_report
+
+            session = self.db_session
+            self.start(
+                lambda: export_user_report(self.archive, session, Path(destination)),
+                lambda path: self.status.set("Report PDF salvato: " + str(path)),
+            )
+
+    def close_db_views(self):
+        for dialog in self.db_dialogs:
+            if dialog.winfo_exists():
+                dialog.destroy()
+        self.db_dialogs.clear()
+
     def close(self):
         if self.future and not messagebox.askyesno(
             "Operazione in corso", "Annullare e chiudere al termine della richiesta corrente?"
@@ -807,12 +1109,24 @@ class App:
         self.status.set("Chiusura in corso…")
 
 
-def launch(demo=False, env_file=None):
+def launch(demo=False, env_file=None, database=None):
     try:
         window = tk.Tk()
     except tk.TclError:
         print("Display grafico non disponibile. Usa --help per i comandi da terminale.")
         return 1
-    App(window, demo, env_file)
+    try:
+        App(window, demo, env_file, database)
+    except FadError as exc:
+        messagebox.showerror("Avvio non riuscito", str(exc))
+        window.destroy()
+        return 2
+    except OSError:
+        messagebox.showerror(
+            "Avvio non riuscito",
+            "Impossibile aprire il database: controllare percorso, permessi e spazio.",
+        )
+        window.destroy()
+        return 2
     window.mainloop()
     return 0

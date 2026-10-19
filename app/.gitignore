@@ -14,3 +14,9 @@ demo-workspace/
 logs/
 *.jsonl
 *.jsonl.*
+*.sqlite3
+*.sqlite3-*
+demo-database/
+*.db
+*.db-wal
+*.db-shm

@@ -15,7 +15,9 @@ from .observability import configure, event, failure, monitored
 
 
 def parser():
-    p = argparse.ArgumentParser(description="FAD Downloader 0.1.0 - GNU/Linux")
+    p = argparse.ArgumentParser(description="FAD Downloader 0.2.0 - GNU/Linux")
+    p.add_argument("--database", type=Path, help="File SQLite degli utenti e dei BLOB")
+    p.add_argument("--db-user", help="Utente del database (distinto dall'account FAD)")
     p.add_argument("--version", action="version", version=__version__)
     p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
     p.add_argument("--log-dir", type=Path, help="Directory dei log JSON a rotazione")
@@ -35,9 +37,22 @@ def parser():
         "backup",
         "restore",
         "recovery",
+        "user-add",
+        "db-history",
+        "report-pdf",
+        "restore-blob",
+        "db-import",
     ):
         command = sub.add_parser(name)
         command.add_argument("--workspace", type=Path)
+        if name in {"db-history", "report-pdf", "restore-blob", "db-import"}:
+            command.add_argument("--demo", action="store_true")
+        if name == "user-add":
+            command.add_argument("name", help="Nome del nuovo utente ordinario DB")
+        if name in {"report-pdf", "restore-blob"}:
+            command.add_argument("--output", type=Path, required=True)
+        if name == "restore-blob":
+            command.add_argument("--object-id", type=int, required=True)
         if name in {"scan", "plan", "download"}:
             command.add_argument("--demo", action="store_true")
             command.add_argument("--username")
@@ -81,10 +96,67 @@ def _execute(args):
     if not args.command:
         from .gui import launch
 
-        return launch(args.demo, args.env_file)
+        return launch(args.demo, args.env_file, args.database)
     client = None
     cancel = Event()
+    archive, db_session = None, None
     try:
+        from .database import Archive
+
+        if args.command in {
+            "user-add",
+            "db-history",
+            "report-pdf",
+            "restore-blob",
+            "db-import",
+        } or (args.command == "download" and not args.dry_run):
+            archive = Archive(args.database, demo=getattr(args, "demo", False))
+            if args.command == "user-add":
+                password = getpass("Password nuovo utente DB: ")
+                if password != getpass("Ripeti password: "):
+                    raise FadError("USER", "Le password non coincidono.")
+                archive.register(args.name, password)
+                password = None
+                print("Utente ordinario DB creato.")
+                return 0
+            if getattr(args, "demo", False):
+                db_session = archive.demo_session()
+                if args.db_user and args.db_user != "studente1":
+                    archive.logout(db_session)
+                    db_session = archive.login(
+                        args.db_user,
+                        "DemoStudente2!"
+                        if args.db_user == "studente2"
+                        else getpass("Password utente DB: "),
+                    )
+            else:
+                if getattr(args, "non_interactive", False):
+                    raise FadError(
+                        "AUTH_REQUIRED",
+                        "L'archivio richiede un login utente DB interattivo; usare la GUI o omettere --non-interactive.",
+                    )
+                username = args.db_user or input("Utente DB: ").strip()
+                db_session = archive.login(username, getpass("Password utente DB: "))
+            if args.command == "db-history":
+                print(json.dumps(archive.history(db_session), ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "report-pdf":
+                from .pdf_reports import export_user_report
+
+                print(export_user_report(archive, db_session, args.output))
+                return 0
+            if args.command == "restore-blob":
+                archive.restore(db_session, args.object_id, args.output)
+                print("BLOB ripristinato.")
+                return 0
+            if args.command == "db-import":
+                if args.workspace is None:
+                    raise FadError(
+                        "CONFIG", "Specificare --workspace per importare i download esistenti."
+                    )
+                result = archive.import_workspace(db_session, args.workspace)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 3 if result["failed"] else 0
         from .state import (
             backup_state,
             load_catalog,
@@ -97,11 +169,19 @@ def _execute(args):
 
         config = preferences() if args.command in {"scan", "plan", "download"} else {}
         if args.workspace is None:
-            args.workspace = (
-                Path.home() / "FAD-demo"
-                if getattr(args, "demo", False)
-                else Path(config.get("workspace", Path.home() / "FAD"))
-            )
+            if db_session:
+                args.workspace = (
+                    Path.home()
+                    / ("FAD-demo" if getattr(args, "demo", False) else "FAD")
+                    / "utenti"
+                    / str(db_session.user_id)
+                )
+            else:
+                args.workspace = (
+                    Path.home() / "FAD-demo"
+                    if getattr(args, "demo", False)
+                    else Path(config.get("workspace", Path.home() / "FAD"))
+                )
         limits_data = dict(config.get("limits", {}))
         if args.file_limit is not None:
             limits_data["file_bytes"] = args.file_limit
@@ -244,9 +324,9 @@ def _execute(args):
             finally:
                 new_password = None
 
-        result = Downloader(client, account, None if args.demo else reauthenticate).run(
-            tasks, args.workspace
-        )
+        result = Downloader(
+            client, account, None if args.demo else reauthenticate, archive, db_session
+        ).run(tasks, args.workspace)
         for warning in found.warnings:
             print(("Demo: " if args.demo else "Scansione incompleta: ") + warning, file=sys.stderr)
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -274,6 +354,8 @@ def _execute(args):
     finally:
         if client:
             client.close()
+        if archive and db_session:
+            archive.logout(db_session)
 
 
 if __name__ == "__main__":

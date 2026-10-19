@@ -1,4 +1,4 @@
-# FAD Downloader 0.1.0
+# FAD Downloader 0.2.0
 
 Applicazione Python per GNU/Linux con GUI italiana e CLI condivisa. Raccoglie materiali e test già svolti della FAD in una directory consultabile offline.
 
@@ -12,6 +12,75 @@ Il flusso completo è implementato e provato con dati sintetici. Dopo la correzi
 
 Rimuovere `--demo` per accedere alla FAD. `preview_gui.py` cattura una schermata e chiude automaticamente la finestra: non è il launcher.
 Per avviare dall'IDE aprire `run.py` e selezionare l'interprete `.venv` del repository.
+
+## Utenti DB, archivio BLOB e report PDF
+
+Gli utenti del database sono distinti dall'account FAD. SQLite non ha account nativi:
+la tabella `users` contiene gli utenti applicativi, tutti ordinari e con gli stessi permessi.
+Non esiste un ruolo amministratore. Il login FAD e il suo `.env` mantengono il comportamento precedente.
+
+Nella nuova barra superiore:
+
+1. «Registra utente DB» crea un account (nome di 3-40 lettere/numeri/._-, password di almeno 8 caratteri).
+2. «Accedi DB» seleziona l'utente proprietario dei download; «Esci DB» termina solo questa sessione.
+3. Accedere alla FAD, scansionare, selezionare e scaricare come prima. Il download richiede un utente DB.
+4. «Archivio BLOB» mostra soltanto lo storico dell'utente connesso. È possibile scegliere il file principale o un allegato e ripristinarlo dal DB in un nuovo percorso.
+5. «Report PDF» genera con ReportLab il report personale: utente, data, corso, risorsa, esito, numero di file e byte. Il report può avere più pagine e non incorpora i contenuti dei BLOB.
+6. «Importa workspace» archivia i file già registrati nei manifest delle versioni precedenti. Hash e dimensioni vengono verificati; file mancanti o modificati non vengono importati. L'importazione è attribuita all'utente DB connesso e non ricostruisce le date storiche originali.
+
+La registrazione non crea utenti sulla FAD. Le password degli utenti DB sono conservate
+con hash scrypt e salt casuale, non nel `.env`. Le sessioni DB scadono dopo 8 ore.
+Ogni query di storico, ripristino e report verifica la sessione e filtra per proprietario.
+Un workspace usato per scaricare/importare viene associato al database e all'utente DB;
+per un altro utente scegliere una directory diversa. Al cambio utente la GUI propone `~/FAD/utenti/ID`.
+
+Ogni file scaricato, compresi gli allegati degli export HTML, viene copiato in SQLite.
+`objects` registra hash e dimensione; `object_chunks.data` contiene il contenuto **BLOB**
+in blocchi da 1 MiB. Questo evita un singolo BLOB enorme e mantiene la memoria limitata.
+La transazione comprende l'intera risorsa e i suoi allegati. I contenuti identici sono deduplicati
+per utente; lo storico conserva ogni operazione. Se l'archiviazione fallisce, i file locali restano
+conservati, il report indica `archiviazione_fallita` e il task resta ritentabile.
+
+Database reale: `%LOCALAPPDATA%/fad-downloader/archive.sqlite3` su Windows;
+`$XDG_DATA_HOME/fad-downloader/archive.sqlite3` o `~/.local/share/fad-downloader/archive.sqlite3` su Linux.
+`--database /percorso/archive.sqlite3` sceglie un file alternativo. SQLite è incluso in Python (`sqlite3`),
+quindi non richiede un server. La dipendenza PDF è `reportlab`.
+
+La separazione degli utenti è applicativa: il file SQLite contiene i dati di tutti gli utenti DB
+e non è cifrato. Chi ha accesso diretto al file con lo stesso account del sistema operativo può leggerlo.
+Il backup dello stato del workspace non include SQLite: chiudere tutte le istanze dell'applicazione
+prima di copiare anche il file DB, oppure usare strumenti che gestiscono correttamente SQLite/WAL.
+
+### Due utenti dimostrativi
+
+`--demo` usa un database separato `demo.sqlite3` e crea due utenti ordinari:
+
+| Utente DB | Password solo demo |
+|---|---|
+| studente1 | DemoStudente1! |
+| studente2 | DemoStudente2! |
+
+La GUI demo apre `studente1`; usare «Accedi DB» per provare `studente2` e verificare la separazione.
+Il database reale non viene popolato con account o password predefiniti.
+La modalità demo non consente il login FAD reale né l'importazione di workspace reali nel DB dimostrativo.
+`create_demo_archive.py` crea un esempio offline sotto `demo-database/`, con due utenti,
+download BLOB e un [report PDF dimostrativo](examples/report_download_studente1.pdf).
+I PDF non sovrascrivono file esistenti: scegliere una nuova destinazione.
+
+```bash
+fad-downloader user-add primo_utente
+fad-downloader user-add secondo_utente
+fad-downloader --db-user primo_utente download --workspace "$HOME/FAD/utente1"
+fad-downloader --db-user primo_utente db-history
+fad-downloader --db-user primo_utente report-pdf --output report_utente1.pdf
+fad-downloader --db-user primo_utente db-import --workspace "$HOME/FAD/utente1"
+fad-downloader --db-user primo_utente restore-blob --object-id 1 --output recuperato.bin
+fad-downloader --db-user studente2 download --demo --workspace "$HOME/FAD-demo/utente2"
+```
+
+La password DB viene richiesta senza eco; non passarla come argomento. Per i download reali
+il login DB è interattivo: `--non-interactive` non è utilizzabile insieme all'archiviazione obbligatoria.
+`plan` e `--dry-run` continuano a funzionare senza creare utenti, DB o BLOB.
 
 ## Installazione Ubuntu
 
@@ -99,9 +168,9 @@ fad-downloader report --workspace "$HOME/FAD-demo"
 fad-downloader backup --workspace "$HOME/FAD-demo"
 fad-downloader recovery --workspace "$HOME/FAD-demo"
 fad-downloader restore --workspace "$HOME/FAD-demo" --backup .fad/backups/NOME_BACKUP
-fad-downloader --env-file .env download --non-interactive --course-id 123 --type materials
-fad-downloader download --resume --non-interactive
-fad-downloader download --copy-conflicts --non-interactive
+fad-downloader --env-file .env --db-user primo_utente download --course-id 123 --type materials
+fad-downloader --db-user primo_utente download --resume
+fad-downloader --db-user primo_utente download --copy-conflicts
 ```
 
 `plan` e `download --dry-run` non scrivono materiali o stato; una scansione reale richiede comunque rete. `scan` salva il catalogo. `--type`: all/materials/quizzes. `--workspace` prevale sulla directory globale; default `~/FAD` o `~/FAD-demo`. `--file-limit` e `--run-limit`, prima del sottocomando, regolano i byte per la CLI. In GUI usare «Limiti».

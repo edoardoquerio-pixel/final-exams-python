@@ -47,3 +47,19 @@ def test_cli_offline_catalog_backup_restore(tmp_path, capsys):
     capsys.readouterr()
     assert main(["recovery", "--workspace", workspace]) == 0
     assert folder in json.loads(capsys.readouterr().out)["backups"]
+
+
+def test_cli_two_database_users_and_pdf(tmp_path, capsys):
+    database = str(tmp_path / "demo.sqlite3")
+    for user in ("studente1", "studente2"):
+        prefix = ["--database", database, "--db-user", user]
+        assert main(prefix + ["download", "--demo", "--workspace", str(tmp_path / user)]) == 0
+        capsys.readouterr()
+        assert main(prefix + ["db-history", "--demo"]) == 0
+        assert len(json.loads(capsys.readouterr().out)) == 3
+        assert (
+            main(prefix + ["report-pdf", "--demo", "--output", str(tmp_path / (user + ".pdf"))])
+            == 0
+        )
+        assert (tmp_path / (user + ".pdf")).read_bytes().startswith(b"%PDF")
+        capsys.readouterr()

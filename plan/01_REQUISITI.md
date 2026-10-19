@@ -27,6 +27,9 @@
 | R23 | Input non fidati e sola lettura remota | Endpoint consentiti, HTML inattivo e nessuna scrittura esterna alla root |
 | R24 | Risultati verificabili | Esiti tipizzati, unità di conteggio separate, manifest indipendente |
 | R25 | Migrazione e recupero locale | Schema futuro rifiutato, backup ripristinabile, temporanei riconosciuti |
+| R26 | Archivio SQLite dei contenuti | File principali e allegati conservati come BLOB con hash e dimensione; rollback se incompleti |
+| R27 | Almeno due utenti DB ordinari | Registrazione/login, nessun ruolo admin; storico e BLOB separati per proprietario |
+| R28 | Report PDF personale con ReportLab | PDF generato dal DB per l'utente connesso, senza dati di altri utenti, anche multipagina |
 
 ## Vincoli
 
