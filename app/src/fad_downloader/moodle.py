@@ -444,6 +444,25 @@ class Moodle:
         return BeautifulSoup(str(soup) + "\n" + "\n".join(fragments), "html.parser")
 
     def expand(self, course, resource):
+        if resource.kind == "assign":
+            soup, base = self.page(resource.url)
+            main = soup.select_one("#region-main")
+            if main is None:
+                self.warnings.append(f"{resource.name}: contenuto del compito non riconosciuto.")
+                return [resource]
+            return [resource, *[
+                replace(
+                    self.resource(
+                        course, resource.activity_id,
+                        unquote(urlsplit(url).path.rsplit("/", 1)[-1]),
+                        "file", url, resource.section,
+                    ),
+                    activity_name=resource.activity_name or resource.name,
+                    section_index=resource.section_index,
+                    section_id=resource.section_id,
+                )
+                for url in file_links(main, base)
+            ]]
         if resource.kind == "quiz":
             soup, base = self.page(resource.url)
             result = []

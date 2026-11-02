@@ -1,5 +1,6 @@
 include CHANGELOG.md
 recursive-include tests *.py
 include run.py create_demo_archive.py check_linux.sh check_release.sh
+include verify_fad_integrity.py
 include .env.example
 include examples/report_download_studente1.pdf

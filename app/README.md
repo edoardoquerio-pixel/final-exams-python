@@ -157,6 +157,21 @@ L'inventario riconosce temporanei `.part-*`; la rimozione resta manuale. Non mod
 
 ## CLI
 
+`scan` e `plan` mostrano gli ID degli oggetti nel campo `tasks[].id`.
+Usare `--course-id ID` per scegliere un corso e `--resource-id ID_OGGETTO` per scegliere
+un oggetto; entrambe le opzioni sono ripetibili. La selezione rispetta anche `--type`:
+un ID assente dai corsi o dal tipo selezionati produce un errore.
+`--resource-id` non è combinabile con `--resume` o `--copy-conflicts`, che recuperano
+piani precedenti. La scansione conserva comunque il catalogo completo.
+
+```bash
+fad-downloader plan --demo --course-id 1
+fad-downloader plan --demo --course-id 1 --resource-id ID_OGGETTO
+fad-downloader download --demo --course-id 1 --resource-id ID_OGGETTO --workspace ./demo-workspace
+```
+
+Sostituire `ID_OGGETTO` con un ID mostrato dall'anteprima.
+
 ```bash
 fad-downloader --help
 fad-downloader scan --demo --workspace "$HOME/FAD-demo"
@@ -223,6 +238,45 @@ Su Linux i nuovi file hanno permessi `600`. I log diagnostici possono essere pro
 in simulazione, che continua a non scrivere materiali o stato del workspace.
 
 ## Test e build
+
+La scansione include ora anche gli allegati introduttivi dei compiti, le consegne
+già presenti e i PDF di feedback, conservando il collegamento al compito. Queste sono
+operazioni di lettura: l'upload resta escluso. I link file con parametro `time` numerico
+sono riconosciuti. Dopo l'aggiornamento riavviare l'app e premere «Scansiona FAD» per
+aggiornare anche i cataloghi salvati prima della correzione.
+
+Il [confronto diretto con la FAD](../plan/19_INTEGRITA_FAD.md) documenta dimensioni,
+SHA256, export e BLOB. `python verify_fad_integrity.py` ripete la prova reale sul più
+recente collaudo in `.verification-live/`, senza sovrascriverne i download; può trasferire
+diversi GB. `--exports-only` ricontrolla soltanto gli HTML usando il catalogo salvato.
+Legge internamente `.env`: eseguirlo solo nell'ambito di un collaudo reale autorizzato.
+I test sintetici del verificatore non contattano la rete.
+
+Per il gate di produzione Linux consultare [il collaudo finale](../plan/18_COLLAUDO_PRODUZIONE.md).
+Il candidato locale non è una dichiarazione di completezza del Moodle reale.
+Il bundle offline generato in `.verification-artifacts/` è specifico per Linux x86_64,
+CPython 3.14; contiene dipendenze bloccate con hash. A gate chiuso, dalla cartella `app`:
+
+```bash
+(cd .verification-artifacts && sha256sum -c SHA256SUMS)
+python3 -m venv .venv-produzione-linux
+.venv-produzione-linux/bin/python -m pip install --no-index --require-hashes --find-links .verification-artifacts/wheelhouse-linux -r .verification-artifacts/requirements-production-linux.lock
+.venv-produzione-linux/bin/python -m pip install --no-index --no-deps .verification-artifacts/fad_downloader-0.2.0-py3-none-any.whl
+.venv-produzione-linux/bin/fad-downloader --env-file .env
+```
+
+Usare un filesystem Linux con permessi POSIX per credenziali e dati di produzione.
+Gli account DB ordinari si registrano dall'app; i DB sotto `.verification-live/` sono
+solo archivi di collaudo con utenze temporanee, separati dall'archivio di produzione.
+
+Ambiente Windows dedicato: `.venv-verifica/` (non versionato). Dopo averlo creato
+con `python -m venv .venv-verifica`, installare con il suo interprete
+`-m pip install -e '.[dev]' setuptools wheel`.
+`powershell -ExecutionPolicy Bypass -File ./check_windows.ps1` ripete test, Ruff,
+Bandit, controllo dipendenze, build e prova della wheel installata separatamente.
+Gli esiti dei test saltati devono essere letti: un display mancante lascia aperti i test GUI.
+`smoke_release.py` prova due utenti, download demo, integrità, storico e PDF
+con dati temporanei nella sola directory `.verification-smoke/`.
 
 ```bash
 python -m pip install -e '.[dev]'

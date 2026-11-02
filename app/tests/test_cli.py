@@ -6,6 +6,35 @@ import sys
 from fad_downloader.cli import main
 
 
+def test_cli_selects_individual_objects(tmp_path, capsys):
+    workspace = str(tmp_path / "workspace")
+    options = ["--no-log"]
+    assert main(options + ["plan", "--demo", "--workspace", workspace]) == 0
+    tasks = json.loads(capsys.readouterr().out)["tasks"]
+    chosen = next(t for t in tasks if t["type"] == "quiz_review")
+    selection = ["--course-id", "1", "--resource-id", chosen["id"]]
+    assert main(options + ["plan", "--demo", "--workspace", workspace] + selection) == 0
+    assert json.loads(capsys.readouterr().out)["tasks"] == [chosen]
+    assert not (tmp_path / "workspace").exists()
+    assert main(options + ["download", "--demo", "--workspace", workspace] + selection) == 0
+    assert len(json.loads(capsys.readouterr().out)["results"]) == 1
+    assert main(options + ["plan", "--demo", "--resource-id", "missing"]) == 2
+    capsys.readouterr()
+    assert main(options + ["plan", "--demo", "--type", "materials"] + selection) == 2
+    capsys.readouterr()
+    assert main(options + ["download", "--demo", "--dry-run", "--resume"] + selection) == 2
+    capsys.readouterr()
+    assert main(options + ["download", "--demo", "--dry-run", "--copy-conflicts"] + selection) == 2
+    capsys.readouterr()
+    assert main(options + ["plan", "--demo", "--course-id", "999", "--resource-id", chosen["id"]]) == 2
+    capsys.readouterr()
+    multiple = ["--resource-id", tasks[0]["id"], "--resource-id", chosen["id"]]
+    assert main(options + ["plan", "--demo", "--workspace", workspace] + multiple) == 0
+    assert {t["id"] for t in json.loads(capsys.readouterr().out)["tasks"]} == {
+        tasks[0]["id"], chosen["id"]
+    }
+
+
 def test_cli_demo_plan_and_download(tmp_path, capsys):
     workspace = str(tmp_path / "workspace")
     assert main(["plan", "--demo", "--workspace", workspace]) == 0

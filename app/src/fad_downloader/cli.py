@@ -57,6 +57,9 @@ def parser():
             command.add_argument("--demo", action="store_true")
             command.add_argument("--username")
             command.add_argument("--course-id", type=int, action="append")
+            command.add_argument(
+                "--resource-id", action="append", help="ID dell'oggetto scelto, ripetibile (vedere scan/plan)"
+            )
             command.add_argument("--type", choices=("all", "materials", "quizzes"), default="all")
             command.add_argument("--non-interactive", action="store_true")
         if name == "download":
@@ -264,6 +267,13 @@ def _execute(args):
             if (not args.course_id or r.course_id in args.course_id)
             and (args.type == "all" or (r.kind == "quiz_review") == (args.type == "quizzes"))
         ]
+        if args.resource_id:
+            selected = set(args.resource_id)
+            if selected - {r.id for r in resources}:
+                raise FadError("CONFIG", "Oggetto non presente nei corsi e nel tipo selezionati.")
+            if args.command == "download" and (args.resume or args.copy_conflicts):
+                raise FadError("CONFIG", "--resource-id non è combinabile con --resume o --copy-conflicts.")
+            resources = [r for r in resources if r.id in selected]
         naming, mapping = load_settings(args.workspace)
         if not (args.workspace / ".fad/settings.json").exists():
             naming = Naming(**config.get("naming", {}))

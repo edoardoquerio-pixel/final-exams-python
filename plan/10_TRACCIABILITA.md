@@ -1,12 +1,15 @@
 # 10 - Matrice di copertura
 
+Questa matrice descrive il piano iniziale. Per lo stato corrente, inclusi R26–R28,
+consultare [16_AUDIT_REQUISITI.md](16_AUDIT_REQUISITI.md); le righe keyring sono storiche.
+
 Ogni riga richiede codice, test e prova di accettazione prima della chiusura. Le famiglie T01-T12 sono definite in [05_TEST_E_VERIFICHE.md](05_TEST_E_VERIFICHE.md). Stato iniziale per tutte le righe: **da implementare e verificare**.
 
 | Requisito | Fase | Componente | Test | Evidenza di accettazione |
 |---|---|---|---|---|
 | R01 | F0A, F11 | Packaging/GUI | T01, T08 | Installazione Ubuntu e avvio desktop |
 | R02 | F3 | AuthService | T02, T10 | Login/logout/errore e sessione scaduta |
-| R03 | F3 | Keyring adapter | T02 | Salvataggio e delete reali, fallback senza memoria |
+| R03 | F3 | env_config/GUI | T02 | `.env` autorevole, salvataggio solo dopo successo, ricaricamento/cancellazione e account isolati |
 | R04 | F4 | CatalogAdapter | T03 | Catalogo confrontato con browser |
 | R05 | F4, F5 | Mapping/Planner | T03, T04 | Rescan conserva decisioni e distingue novità |
 | R06 | F5, F9 | Planner/GUI | T04, T08 | Selezione gerarchica coincide con piano |

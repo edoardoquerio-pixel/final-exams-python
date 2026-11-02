@@ -1,4 +1,6 @@
 import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from unittest.mock import Mock
 
 import pytest
@@ -33,6 +35,21 @@ def test_accept_read_routes():
         ORIGIN + "/pluginfile.php/1/x.pdf?forcedownload=1",
     ):
         validate_url(url)
+
+
+def test_assignment_read_and_timestamp_file_only():
+    validate_url(ORIGIN + "/mod/assign/view.php?id=17")
+    validate_url(ORIGIN + "/pluginfile.php/1/mod_label/intro/a.pdf?time=1760000000000")
+    for suffix in ("", "abc", "-1", "1&time=2", "1&action=delete", "9" * 17):
+        with pytest.raises(FadError):
+            validate_url(ORIGIN + "/pluginfile.php/1/a.pdf?time=" + suffix)
+    for url, method in (
+        (ORIGIN + "/mod/assign/view.php?id=17&action=editsubmission", "GET"),
+        (ORIGIN + "/mod/assign/view.php?id=17", "POST"),
+        (ORIGIN + "/course/view.php?id=1&time=123", "GET"),
+    ):
+        with pytest.raises(FadError):
+            validate_url(url, method)
 
 
 def test_redirect_rejected_before_following():
@@ -76,6 +93,40 @@ def test_cancel_and_size_limit():
     with pytest.raises(FadError, match="limite"):
         list(client.chunks(response, 5))
     client.close()
+
+
+def test_cancel_interrupts_retry_after_without_another_request():
+    client = HttpClient()
+    retry_started = Event()
+    response = Mock(status_code=429, headers={"Retry-After": "30"})
+    response.close.side_effect = retry_started.set
+    client.session.request = Mock(return_value=response)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            result = worker.submit(client.request, ORIGIN + "/my/")
+            try:
+                assert retry_started.wait(5), "Il worker non ha raggiunto il retry"
+            finally:
+                client.cancel.set()
+            with pytest.raises(FadError) as error:
+                result.result(timeout=5)
+            assert error.value.code == "CANCELLED"
+        client.session.request.assert_called_once()
+    finally:
+        client.cancel.set()
+        client.close()
+
+
+def test_stream_request_budget_prevents_publishing_another_chunk():
+    client = HttpClient()
+    response = Mock(fad_started=time.monotonic() - client.limits.request_seconds - 1)
+    response.iter_content.return_value = [b"expired payload"]
+    try:
+        with pytest.raises(FadError) as error:
+            next(client.chunks(response))
+        assert error.value.code == "LIMIT"
+    finally:
+        client.close()
 
 
 def test_moodle_login_session_redirect_is_followed_without_password():

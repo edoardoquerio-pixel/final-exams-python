@@ -4,7 +4,7 @@
 |---|---|---|
 | R01 | Avvio GNU/Linux | Installazione pulita Ubuntu e apertura GUI |
 | R02 | Login, logout, sessione scaduta | Login valido/errato, timeout, nuovo accesso |
-| R03 | Ricorda credenziali e cambio account | Consenso, backend sicuro, cancellazione e account isolati |
+| R03 | Credenziali FAD nel `.env` e cambio account | Lettura autorevole dal file, GUI mascherata, salvataggio dopo login riuscito, cancellazione e account isolati |
 | R04 | Prima scansione FAD | Corsi paginati, sezioni e attività senza duplicati |
 | R05 | Mapping e aggiornamento | Scelte conservate; nuovi contenuti evidenziati |
 | R06 | Selezione e ricerca | Solo corsi/sezioni/attività selezionati nel piano |
@@ -32,6 +32,11 @@
 | R28 | Report PDF personale con ReportLab | PDF generato dal DB per l'utente connesso, senza dati di altri utenti, anche multipagina |
 
 ## Vincoli
+
+R03 è riallineato al 26 ottobre 2026 alla scelta dell'utente già registrata nel documento 13:
+login tramite `.env`, senza portachiavi o override delle variabili d'ambiente. Il file contiene
+credenziali in chiaro e va protetto dai permessi del sistema; non è un archivio cifrato.
+Un login fallito non sovrascrive i dati precedenti. Le indicazioni keyring del piano iniziale sono storiche.
 
 Python 3.10+ come da proposta: Python 3.12 sarà la versione di riferimento iniziale del progetto; il limite minimo 3.10 richiede un job di compatibilità dedicato. La matrice precisa OS e versioni verrà congelata in F0. Non dichiarare compatibilità con ogni versione futura. Nessun riferimento a codice già sviluppato come prerequisito.
 

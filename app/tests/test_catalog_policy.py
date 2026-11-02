@@ -18,8 +18,9 @@ def test_unsupported_activity_saved_but_not_requested(tmp_path):
     save_catalog(tmp_path, DEMO_ACCOUNT, found)
     loaded, _ = load_catalog(tmp_path, DEMO_ACCOUNT)
     assert assignment in loaded.resources
+    validate_url(assignment.url)  # Lettura allegati durante la scansione.
     with pytest.raises(FadError):
-        validate_url(assignment.url)
+        validate_url(assignment.url, method="POST")
     client = DemoHttp()
     client.request = lambda *a, **kw: pytest.fail("Nessuna richiesta per attività non supportate")
     result = Downloader(client, DEMO_ACCOUNT).run(

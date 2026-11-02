@@ -2,6 +2,10 @@
 
 ## Prima di ogni task
 
+Per il progetto già implementato partire da [00_CONTESTO_ATTUALE.md](00_CONTESTO_ATTUALE.md).
+Il prompt «da zero» riportato sotto è storico: per continuare usare il prompt di ripresa
+del contesto attuale e preservare il codice e le modifiche esistenti.
+
 Leggere README, requisiti, fase e istruzioni locali applicabili. Controllare Git status e non sovrascrivere modifiche dell'utente. Individuare file modificabili, contratto, failure mode e test. Non introdurre funzioni fuori ambito, non leggere credenziali reali e non inviare HTML privato nei prompt.
 
 ## Output richiesto per task

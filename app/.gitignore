@@ -1,4 +1,9 @@
 .venv/
+.venv-verifica/
+.venv-produzione-linux/
+.verification-*/
+.verification-*.log
+.test-tmp-*/
 __pycache__/
 *.pyc
 .pytest_cache/

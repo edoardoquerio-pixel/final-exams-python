@@ -1,5 +1,52 @@
 # 09 - Registri operativi
 
+## Correzione del confronto sito → app, 26 ottobre 2026
+
+[Esito della correzione](21_CORREZIONE_COMPLETEZZA.md): gestiti time numerico e
+lettura allegati dei compiti. Tutti i 147 riferimenti browser presenti; 76 file
+prima assenti e 2 pagine scaricati, seconda passata corretta, 78 BLOB senza problemi,
+PDF di 9 pagine. GUI aggiornata con due casi reali verificati visivamente.
+Linux 140 test passati su ciascuna versione 3.10/3.12/3.14 e sulla wheel installata;
+Windows 136 + 4 skip. Rimangono i precedenti avvisi, senza ampliamento degli host.
+
+## Confronto sito → GUI del 26 ottobre 2026
+
+[Verifica dal browser](20_CONFRONTO_SITO_GUI.md): 32 corsi e 279 sezioni aperti,
+10 cartelle accessibili e 45 pagine di compito controllate. Confrontato il catalogo
+della scansione corrente nella GUI, non il DB storico. Fra 147 riferimenti a file,
+33 materiali didattici, 40 consegne e 3 feedback non sono elencati. Individuati il
+rifiuto silenzioso del parametro time e la mancata espansione dei compiti. Runtime
+non modificato; completezza non raggiunta. Download campione di un file omesso riuscito.
+
+## Integrità rispetto alla FAD del 26 ottobre 2026
+
+[Confronto diretto](19_INTEGRITA_FAD.md): 438 file e 1 asset identici alla FAD,
+23 quiz identici, 1 pagina identica e 1 meno aggiornata (100 caratteri aggiuntivi remoti).
+458 BLOB riletti senza errori; 876 riferimenti file DB confrontati con la FAD.
+Nuovo verificatore e 8 test sintetici passati su Windows/Linux; Ruff/Bandit puliti.
+Nessun download precedente sovrascritto. Restano i 16 materiali non riconosciuti:
+nessuna dichiarazione di completezza o via libera alla produzione.
+
+## Gate produzione del 26 ottobre 2026
+
+Esito corrente: [18_COLLAUDO_PRODUZIONE.md](18_COLLAUDO_PRODUZIONE.md).
+129 test superati su Linux 3.10/3.12/3.14; collaudo reale e ritest pagine conclusi.
+Nessun via libera alla raccolta completa: restano 16 materiali non riconosciuti.
+R03 riallineato alla scelta .env già vigente. Nessuna pubblicazione o upload.
+
+## Ripresa del 26 ottobre 2026
+
+Aggiornamento successivo: [verifiche eseguite](15_VERIFICHE_2026_10_26.md).
+121 test passati, 4 saltati; ulteriori casi CLI superati. Ruff/Bandit/pip check superati.
+Build non completata per setuptools assente. La nota seguente sul selettore non verificato
+è conservata come stato precedente alla prova.
+
+Contesto consolidato in [00_CONTESTO_ATTUALE.md](00_CONTESTO_ATTUALE.md): requisiti
+dell'utente, mappa del codice, prove storiche, limiti e prossimo passo. Upload rimandato
+per istruzione dell'utente. Il selettore CLI `--resource-id` e il relativo test sono
+modifiche in corso senza esito di test confermato; questa riorganizzazione documentale
+non ne certifica il funzionamento.
+
 ## Stato iniziale
 
 | Fase | Stato | Evidenza | Problemi |

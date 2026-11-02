@@ -70,6 +70,7 @@ ROUTES = {
     "/course/view.php": {"id", "section", "sectionid"},
     "/mod/resource/view.php": {"id", "redirect"},
     "/mod/folder/view.php": {"id"},
+    "/mod/assign/view.php": {"id"},
     "/mod/page/view.php": {"id"},
     "/mod/book/view.php": {"id", "chapterid"},
     "/mod/book/tool/print/index.php": {"id", "chapterid"},
@@ -97,10 +98,24 @@ def validate_url(url: str, method: str = "GET", allow_logout=False) -> None:
         if ".." in path.split("/") or "\\" in path or "%" in path or any(ord(c) < 32 for c in url):
             raise ValueError
         allowed = (
-            {"forcedownload", "token"} if path.startswith("/pluginfile.php/") else ROUTES.get(path)
+            {"forcedownload", "token", "time"} if path.startswith("/pluginfile.php/") else ROUTES.get(path)
         )
-        if allowed is None or not set(parse_qs(parts.query)).issubset(allowed):
+        if allowed is None or not set(parse_qs(parts.query, keep_blank_values=True)).issubset(allowed):
             raise ValueError
+        if path == "/mod/assign/view.php":
+            query = parse_qs(parts.query, keep_blank_values=True)
+            ids = query.get("id", [])
+            if len(ids) != 1 or not ids[0].isascii() or not ids[0].isdigit() or int(ids[0]) <= 0:
+                raise ValueError
+        if path.startswith("/pluginfile.php/"):
+            query = parse_qs(parts.query, keep_blank_values=True)
+            if "time" in query and (
+                len(query["time"]) != 1
+                or not query["time"][0].isascii()
+                or not query["time"][0].isdigit()
+                or len(query["time"][0]) > 16
+            ):
+                raise ValueError
         if path == "/login/index.php" and "testsession" in parse_qs(parts.query):
             values = parse_qs(parts.query)["testsession"]
             if (

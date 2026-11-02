@@ -8,6 +8,35 @@ from fad_downloader.domain import Course, FadError, ORIGIN
 from fad_downloader.moodle import Moodle, soup_document
 
 
+def test_assignment_expands_material_submission_and_feedback_without_write():
+    moodle = Moodle(Mock(cancel=Event()))
+    course = Course(1, "Course", ORIGIN + "/course/view.php?id=1")
+    resource = moodle.resource(course, 7, "Task", "assign", ORIGIN + "/mod/assign/view.php?id=7")
+    markup = '''<a href="/pluginfile.php/9/outside.pdf">Outside</a><main id="region-main">
+      <a href="/pluginfile.php/1/mod_assign/intro/task.pdf?time=123">Material</a>
+      <a href="/pluginfile.php/2/assignsubmission_file/submission_files/answer.zip">Submission</a>
+      <a href="/pluginfile.php/3/assignfeedback_editpdf/download/correction.pdf">Feedback</a>
+      <a href="/mod/assign/view.php?id=7&action=editsubmission">Edit</a>
+      <a href="https://evil.test/pluginfile.php/4/stolen.pdf">External</a>
+      <a href="/pluginfile.php/1/mod_assign/intro/task.pdf?time=123">Duplicate</a>
+    </main>'''
+    moodle.page = Mock(return_value=(BeautifulSoup(markup, "html.parser"), resource.url))
+    result = moodle.expand(course, resource)
+    assert result[0] is resource
+    assert [r.name for r in result[1:]] == ["task.pdf", "answer.zip", "correction.pdf"]
+    assert all(r.kind == "file" and r.activity_id == 7 for r in result[1:])
+    moodle.page.assert_called_once_with(resource.url)
+
+
+def test_assignment_unknown_layout_keeps_activity_and_warns():
+    moodle = Moodle(Mock(cancel=Event()))
+    course = Course(1, "Course", ORIGIN + "/course/view.php?id=1")
+    resource = moodle.resource(course, 7, "Task", "assign", ORIGIN + "/mod/assign/view.php?id=7")
+    moodle.page = Mock(return_value=(BeautifulSoup("<html></html>", "html.parser"), resource.url))
+    assert moodle.expand(course, resource) == [resource]
+    assert moodle.warnings
+
+
 def test_scan_publishes_courses_before_loading_and_independent_snapshots():
     from fad_downloader.demo import catalog
     from fad_downloader.domain import Limits

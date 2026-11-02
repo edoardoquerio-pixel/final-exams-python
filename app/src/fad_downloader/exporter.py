@@ -185,6 +185,10 @@ def export_bundle(client, resource, write_asset):
             nodes = soup.select(
                 ".resourcecontent, #region-main .generalbox .no-overflow, .activity-description .no-overflow"
             )
+            if not nodes and resource.kind == "page":
+                # Some Moodle pages have no overflow wrapper. Keep the fallback
+                # confined to the page module content, never the whole main region.
+                nodes = soup.select("#page-mod-page-view #region-main .generalbox")
         if not nodes and resource.kind == "quiz_review" and question_ids:
             continue
         if not nodes:

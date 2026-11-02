@@ -1,10 +1,29 @@
 # Piano di realizzazione - FAD Downloader
 
-Versione 1.1 - revisione del 14 ottobre 2026. Termine indicativo: fine novembre 2026.
+Ultimo esito: [correzione delle omissioni sito → app](21_CORREZIONE_COMPLETEZZA.md).
 
-Questi documenti guidano lo sviluppo da zero del progetto descritto nel PDF. La prima implementazione sperimentale è descritta nel [registro 0.0.1](12_VERSIONE_0_0_1.md), che distingue le prove superate dalle verifiche ancora da svolgere. Il precedente `tool/download_fad.py` non è una dipendenza; eventuali confronti vanno documentati.
+**Per riprendere il lavoro leggere prima [00_CONTESTO_ATTUALE.md](00_CONTESTO_ATTUALE.md).**
+Raccoglie lo stato al 26 ottobre 2026, le istruzioni correnti dell'utente e le modifiche
+ancora da verificare. Le sezioni iniziali di questo piano descrivono anche scelte storiche;
+non sono un invito a ricominciare l'applicazione da zero. L'upload è attualmente rimandato.
+
+Versione 1.2 - aggiornamento del 26 ottobre 2026. Termine indicativo: fine novembre 2026.
+
+Questi documenti guidano l'evoluzione del progetto descritto nel PDF. L'applicazione corrente è la 0.2.0: non ricominciare da zero. Il [registro 0.0.1](12_VERSIONE_0_0_1.md) descrive la prima implementazione; il registro 18 riporta il gate di produzione corrente. Il precedente `tool/download_fad.py` non è una dipendenza.
 
 ## Ordine di lettura
+
+Gate per la produzione Linux: [collaudo corrente](18_COLLAUDO_PRODUZIONE.md).
+
+Ultimo confronto degli originali: [integrità rispetto alla FAD](19_INTEGRITA_FAD.md).
+
+Ultimo controllo della completezza: [sito rispetto alla GUI](20_CONFRONTO_SITO_GUI.md).
+Evidenzia 33 riferimenti a materiali didattici assenti dal catalogo corrente dell'app.
+
+Ultimo aggiornamento operativo: [configurazione e collaudo](17_CONFIGURAZIONE_E_COLLAUDO.md).
+
+Esiti più recenti: [verifiche del 26 ottobre 2026](15_VERIFICHE_2026_10_26.md).
+Copertura corrente di ogni requisito: [audit R01–R28 e lista utente](16_AUDIT_REQUISITI.md).
 
 1. [Requisiti e accettazione](01_REQUISITI.md)
 2. [Architettura e dati](02_ARCHITETTURA.md)
@@ -26,7 +45,7 @@ Questi documenti guidano lo sviluppo da zero del progetto descritto nel PDF. La 
 - Sviluppare nella sottocartella `app/` di questo progetto, senza modificare esercizi, Terraform o altri progetti.
 - GUI completa e CLI facoltativa, con servizi condivisi.
 - Solo contenuti visibili all'account; nessun invio di quiz, consegne o modifiche ai corsi.
-- Credenziali reali soltanto nel prompt locale o nel portachiavi approvato; mai in prompt AI, log, fixture o commit.
+- Credenziali reali nel `.env` locale o nei campi dell'applicazione, secondo R03 aggiornato; mai in prompt AI, log, fixture o commit. Il portachiavi non è usato dal login corrente.
 - Test automatici senza rete esterna per default; prove reali deliberate su account e corso autorizzati.
 - Nessuna pubblicazione, upload o invio a terzi incluso automaticamente nel piano.
 - Ogni requisito completato deve avere un'evidenza. Una verifica non eseguita resta «non eseguita».

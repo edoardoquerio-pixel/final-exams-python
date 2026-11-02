@@ -50,6 +50,29 @@ def test_quiz_unknown_type_fails_closed():
         export_bundle(http, catalog().resources[2], lambda u, n: n)
 
 
+def test_page_without_overflow_wrapper_exports_only_module_content():
+    http = DemoHttp()
+    http.document = lambda url: (
+        b'<body id="page-mod-page-view"><nav>PRIVATE_NAV</nav><main id="region-main">'
+        b'<div class="generalbox"><p>Plain page content</p><script>BAD_SCRIPT</script></div>'
+        b'<footer>OTHER_CONTENT</footer></main></body>', url,
+    )
+    html = export_bundle(http, catalog().resources[1], lambda u, n: n).decode()
+    assert "Plain page content" in html
+    for excluded in ("PRIVATE_NAV", "OTHER_CONTENT", "BAD_SCRIPT", "<script"):
+        assert excluded not in html
+
+
+def test_page_fallback_does_not_export_an_unrecognized_page_region():
+    http = DemoHttp()
+    http.document = lambda url: (
+        b'<body id="page-course-view"><main id="region-main"><div class="generalbox">'
+        b'Unrelated course content</div></main></body>', url,
+    )
+    with pytest.raises(FadError, match="non riconosciuto"):
+        export_bundle(http, catalog().resources[1], lambda u, n: n)
+
+
 def test_asset_links_rewritten():
     http = DemoHttp()
     http.document = lambda url: (
