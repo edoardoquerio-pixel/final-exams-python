@@ -1,0 +1,2 @@
+# Linux launch and verification scripts must stay executable after Windows checkout.
+*.sh text eol=lf

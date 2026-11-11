@@ -1,5 +1,32 @@
 # 09 - Registri operativi
 
+## Controllo dei 23 quiz, 9 novembre 2026
+
+[Esito attuale](24_CONTROLLO_QUIZ_2026_11_09.md): 47 pagine lette, 25 con revisione,
+22 senza (6 completati con revisione non permessa, 6 vincolati al profilo, 10 senza
+cronologia visibile). Una delle precedenti 23 revisioni è ora disponibile: esportata,
+HTML e 4 allegati verificati senza problemi. Nessun tentativo avviato o inviato;
+nessuna modifica al runtime richiesta dai risultati di questo controllo.
+
+## Esclusione richiesta dall'utente, 9 novembre 2026
+
+[Regola corrente](23_IGNORA_CORSI_NON_DISPONIBILI.md): ignorare senza avvisi i link
+che restituiscono il messaggio di corso non disponibile agli studenti. Codice distinto
+COURSE_UNAVAILABLE e gestione mirata nel ciclo di scansione; nessuna esclusione permanente.
+Ritest di 17 riferimenti reali: 15 ignorati, 1 HTML conservato, 1 avviso policy mantenuto.
+Windows 141 passati + 4 skip; nuove regressioni su altri errori e nuove scansioni.
+
+## Check completo del 9 novembre 2026
+
+[Registro attuale](22_CHECK_COMPLETO_2026_11_09.md): submodule recuperato, 143 test
+su Linux 3.10/3.12/3.14 e wheel pulita; Windows 139 + 4 skip. Corretti CRLF degli
+script Linux e gestione passiva degli HTML allegati. Chiariti i precedenti avvisi:
+15 riferimenti a corsi non disponibili agli studenti, 1 HTML ora esportato correttamente.
+Scansione reale: 32 corsi, 282 sezioni, 657 risorse; quattro campioni scaricati,
+incrementale, BLOB e PDF verificati. Zero allegati non riconosciuti; 39 avvisi
+classificati (15 indisponibilità, 23 quiz senza review riconosciuta, 1 redirect esterno).
+Audit delle 22 dipendenze runtime senza vulnerabilità note. Nessun push o rilascio.
+
 ## Correzione del confronto sito → app, 26 ottobre 2026
 
 [Esito della correzione](21_CORREZIONE_COMPLETEZZA.md): gestiti time numerico e

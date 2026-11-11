@@ -1,4 +1,54 @@
-# Contesto corrente — 26 ottobre 2026
+# Contesto corrente - 11 novembre 2026
+
+## Revisione del codice con le dispense Python Primi Passi
+
+I rimandi ai due volumi sono raccolti nel [piano di architettura](02_ARCHITETTURA.md).
+Rivisti il budget di rete e il retry, la verifica della copia locale su HTTP 304
+e le transazioni SQLite con registrazione concorrente. Quattro casi di regressione.
+
+Verifiche offline: Ubuntu con Xvfb 149 passati, Windows 148 passati e un test
+specifico Linux saltato. Ruff, Bandit e pip check superati. Wheel installata in
+un ambiente temporaneo e verificata con lo smoke test demo. Le rilevazioni FAD
+reali riportate di seguito risalgono al controllo precedente.
+
+## Contesto e controlli FAD del 9 novembre 2026
+
+**Ultimo controllo:** [24_CONTROLLO_QUIZ_2026_11_09.md](24_CONTROLLO_QUIZ_2026_11_09.md).
+Letti i 47 quiz: 25 con revisione riconosciuta, 22 senza (6 completati ma revisione
+non permessa, 6 riservati per condizioni sul profilo, 10 senza cronologia consultabile).
+Uno dei precedenti 23 ora è revisionabile ed è stato esportato: 5 file, 0 problemi.
+Nessuna revisione accessibile ignorata rilevata, nessun tentativo avviato/inviato;
+nessuna modifica al parser o regola automatica di esclusione aggiunta per questi quiz.
+
+**Ultima decisione utente:** [23_IGNORA_CORSI_NON_DISPONIBILI.md](23_IGNORA_CORSI_NON_DISPONIBILI.md).
+I riferimenti che restituiscono l'avviso di corso non disponibile vengono ora ignorati
+senza avvisi di scansione. Verifica reale mirata: 15 ignorati, HTML valido conservato,
+redirect esterno ancora segnalato. Nessuna blacklist permanente; gli altri errori restano
+visibili. Per aggiornare la raccolta occorre riavviare l'app ed eseguire una nuova scansione.
+
+**Fonte corrente:** [22_CHECK_COMPLETO_2026_11_09.md](22_CHECK_COMPLETO_2026_11_09.md).
+Il progetto è il submodule `final-exams-python`, main, base a6939f4, recuperato dal
+repository. Le modifiche di questo controllo sono locali e non pubblicate.
+
+- Linux 3.10.22/3.12.16/3.14.4 e wheel installata: 143 test passati per prova;
+  Windows 3.14.7: 139 passati, 4 saltati. Ruff/Bandit/pip check superati.
+- Audit online di 22 dipendenze runtime Linux senza vulnerabilità note segnalate.
+- Corretti script .sh CRLF dopo checkout Windows: `.gitattributes` impone LF.
+- Aggiunto export passivo degli HTML da pluginfile e riconoscimento dell'avviso
+  di corso non disponibile; tre regressioni, pacchetti ricostruiti e verificati.
+- FAD attuale: 32 corsi, 282 sezioni, 657 risorse (526 file, 48 compiti, 28 URL,
+  28 googlemeet, 24 review quiz, 3 pagine). Quattro campioni scaricati, incrementale,
+  integrità/BLOB/PDF verificati; HTML reale sanificato con testo preservato.
+- I vecchi 16 materiali sono chiariti: 15 riferimenti a corsi che la FAD dichiara
+  non disponibili agli studenti; 1 HTML ora gestito. Non prova cancellazione sul server.
+- Restano 39 avvisi classificati: 15 indisponibilità, 23 quiz senza review riconosciuta,
+  1 redirect esterno rifiutato. Zero allegati non riconosciuti.
+- I 147 riferimenti browser di ottobre sono ancora presenti, ma non è stato ripetuto
+  un censimento visivo integrale né l'hash di ogni file remoto al 9 novembre.
+- Evidenze correnti: `app/.verification-check-20261109/`, dati privati ignorati da Git.
+  Nessun upload, consegna, nuovo tentativo o ampliamento dei permessi eseguito.
+
+## Storico del 26 ottobre: non usare i gate e i conteggi seguenti come stato corrente
 
 Leggere questo documento per riprendere il progetto esistente.
 **Stato corrente:** [21_CORREZIONE_COMPLETEZZA.md](21_CORREZIONE_COMPLETEZZA.md).

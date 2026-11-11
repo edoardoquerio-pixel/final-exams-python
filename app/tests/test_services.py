@@ -141,3 +141,22 @@ def test_reports_contain_no_url_tokens(tmp_path):
     for path in (tmp_path / ".fad").glob("*.json"):
         assert "SENTINEL" not in path.read_text()
         json.loads(path.read_text())
+
+
+
+def test_304_detects_local_edit_during_request(tmp_path):
+    task = demo_tasks(tmp_path)[0]
+    downloader = Downloader(DemoHttp(), DEMO_ACCOUNT)
+    assert downloader.run([task], tmp_path)["counts"] == {"scaricato": 1}
+    original_request = downloader.http.request
+    local = tmp_path / task.relative
+
+    def unchanged(url, **kwargs):
+        local.write_bytes(b"local edit")
+        response = original_request(url)
+        response.status_code = 304
+        return response
+
+    downloader.http.request = unchanged
+    assert downloader.run([task], tmp_path)["counts"] == {"conflitto": 1}
+    assert local.read_bytes() == b"local edit"

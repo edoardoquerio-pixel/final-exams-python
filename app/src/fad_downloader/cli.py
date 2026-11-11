@@ -94,6 +94,29 @@ def main(argv=None):
     return result
 
 
+def _select_resources(resources, args):
+    matching = []
+    for resource in resources:
+        if args.course_id and resource.course_id not in args.course_id:
+            continue
+        is_quiz = resource.kind == "quiz_review"
+        if args.type == "materials" and is_quiz:
+            continue
+        if args.type == "quizzes" and not is_quiz:
+            continue
+        matching.append(resource)
+
+    if not args.resource_id:
+        return matching
+    selected = set(args.resource_id)
+    available = {resource.id for resource in matching}
+    if selected - available:
+        raise FadError("CONFIG", "Oggetto non presente nei corsi e nel tipo selezionati.")
+    if args.command == "download" and (args.resume or args.copy_conflicts):
+        raise FadError("CONFIG", "--resource-id non è combinabile con --resume o --copy-conflicts.")
+    return [resource for resource in matching if resource.id in selected]
+
+
 @monitored("app.execute")
 def _execute(args):
     if not args.command:
@@ -260,20 +283,12 @@ def _execute(args):
             except (FadError, OSError):
                 print("Accesso riuscito, ma credenziali non salvate nel .env.", file=sys.stderr)
             password = None
-            found = moodle.scan(lambda msg: print(msg, file=sys.stderr))
-        resources = [
-            r
-            for r in found.resources
-            if (not args.course_id or r.course_id in args.course_id)
-            and (args.type == "all" or (r.kind == "quiz_review") == (args.type == "quizzes"))
-        ]
-        if args.resource_id:
-            selected = set(args.resource_id)
-            if selected - {r.id for r in resources}:
-                raise FadError("CONFIG", "Oggetto non presente nei corsi e nel tipo selezionati.")
-            if args.command == "download" and (args.resume or args.copy_conflicts):
-                raise FadError("CONFIG", "--resource-id non è combinabile con --resume o --copy-conflicts.")
-            resources = [r for r in resources if r.id in selected]
+
+            def show_scan_message(message):
+                print(message, file=sys.stderr)
+
+            found = moodle.scan(show_scan_message)
+        resources = _select_resources(found.resources, args)
         naming, mapping = load_settings(args.workspace)
         if not (args.workspace / ".fad/settings.json").exists():
             naming = Naming(**config.get("naming", {}))

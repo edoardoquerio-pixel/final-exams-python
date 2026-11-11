@@ -101,6 +101,13 @@ class App:
             value="Demo offline" if demo else "Accedi alla FAD oppure apri una raccolta locale."
         )
         self.build()
+
+        def on_plan_change(*event):
+            self.invalidate()
+
+        def on_filter_change(*event):
+            self.populate()
+
         for var in (
             self.workspace,
             self.course_template,
@@ -109,10 +116,10 @@ class App:
             self.quizzes,
             self.activity_template,
         ):
-            var.trace_add("write", lambda *_: self.invalidate())
-        self.search.trace_add("write", lambda *_: self.populate())
-        self.type.trace_add("write", lambda *_: self.populate())
-        self.tree.bind("<<TreeviewSelect>>", lambda _: self.invalidate())
+            var.trace_add("write", on_plan_change)
+        self.search.trace_add("write", on_filter_change)
+        self.type.trace_add("write", on_filter_change)
+        self.tree.bind("<<TreeviewSelect>>", on_plan_change)
         window.protocol("WM_DELETE_WINDOW", self.close)
         window.after(100, self.poll)
         if demo:
@@ -723,16 +730,14 @@ class App:
             Path(self.workspace.get()),
         )
         naming, mapping = self.naming(), dict(self.mapping)
-        self.start(
-            lambda: Downloader(
-                client,
-                account,
-                None if self.demo else self.reauthenticate,
-                self.archive,
-                self.db_session,
-            ).run(plan(resources, workspace, account, naming, mapping), workspace, self.emit),
-            self.downloaded,
-        )
+
+        def work():
+            reauthenticate = None if self.demo else self.reauthenticate
+            downloader = Downloader(client, account, reauthenticate, self.archive, self.db_session)
+            tasks = plan(resources, workspace, account, naming, mapping)
+            return downloader.run(tasks, workspace, self.emit)
+
+        self.start(work, self.downloaded)
 
     def downloaded(self, report):
         self.last_failed = {

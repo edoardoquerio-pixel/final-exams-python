@@ -203,3 +203,24 @@ def test_failed_blob_archive_keeps_local_file_and_pending_task(users, tmp_path, 
     assert report["counts"] == {"archiviazione_fallita": 1}
     assert (workspace / tasks[0].relative).read_bytes() == DATA
     assert SafeRoot(workspace).json(".fad/pending.json")["tasks"]
+
+def test_concurrent_registration_reports_duplicate_as_user_error(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    path = tmp_path / "archive.sqlite3"
+    archives = [Archive(path), Archive(path)]
+    ready = Barrier(2, timeout=5)
+
+    def register(archive):
+        ready.wait()
+        try:
+            archive.register("alice", "PasswordAlice!")
+        except FadError as exc:
+            return exc.code
+        return "registered"
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        assert sorted(workers.map(register, archives)) == ["USER", "registered"]
+
+    assert archives[0].login("alice", "PasswordAlice!").username == "alice"

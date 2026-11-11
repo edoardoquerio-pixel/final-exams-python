@@ -122,8 +122,11 @@ class Downloader:
                 headers["If-Modified-Since"] = old["modified"]
         with self.http.request(url, headers=headers) as response:
             if response.status_code == 304:
-                if before is None:
+                current = root.fingerprint(relative)
+                if before is None or current is None:
                     raise FadError("INVALID_CONTENT", "HTTP 304 senza copia valida.")
+                if current != before:
+                    raise FadError("CONFLICT", "File locale modificato durante la richiesta: conservato.")
                 return dict(old), "invariato"
             if "/login/" in urlsplit(response.url).path:
                 raise FadError("AUTH_REQUIRED", "Sessione scaduta: accedere e ritentare.")
@@ -425,9 +428,11 @@ def verify(workspace):
             try:
                 digest, size = hashlib.sha256(), 0
                 with root.open_read(item["path"]) as stream:
-                    while block := stream.read(1024 * 1024):
+                    block = stream.read(1024 * 1024)
+                    while block:
                         digest.update(block)
                         size += len(block)
+                        block = stream.read(1024 * 1024)
                 if size != item["size"] or digest.hexdigest() != item["sha256"]:
                     issues.append(item["path"] + ": contenuto modificato")
             except (OSError, FadError):

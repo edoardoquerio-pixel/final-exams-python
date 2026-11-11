@@ -1,5 +1,34 @@
 # 02 - Architettura e dati
 
+## Riferimenti alle dispense Python Primi Passi
+
+Le dispense convertite si trovano in [Volume 1](../../00_Note/PythonPrimiPassiV1.md) e
+[Volume 2](../../00_Note/PythonPrimiPassiV2.md). I rimandi per la manutenzione del progetto
+seguono la numerazione dei capitoli delle dispense.
+
+Per modifiche ed estensioni di FAD Downloader, usare i due volumi come base
+di conoscenza per scegliere sintassi e organizzazione. Il §10.1 del V1 mostra come
+scomporre il programma in funzioni. Nel flusso CLI, la selezione delle risorse ha
+una funzione propria e il programma principale la chiama prima della pianificazione.
+I §§4.1.1.1 e 4.1.7 del V2 mostrano la prima lettura prima del `while` e
+l’apertura con `with`. Il progetto applica la stessa struttura ai tre cicli
+binari, usando `read(dimensione)` per leggere blocchi di dimensione fissa.
+Per SQLite seguire gli esempi `cursor()`, `execute()`, `fetchone()` e rendere
+visibili `commit()`, `rollback()` e `close()` nel gestore della connessione.
+Per gli eventi Tkinter associare funzioni nominate quando il gestore coordina più
+operazioni o viene riutilizzato. Il download grafico segue l'ordine piano,
+esecuzione e aggiornamento dell'interfaccia.
+
+| Dispensa | Applicazione nel progetto |
+|---|---|
+| V1, cap. 5 e 7 — Funzioni e collezioni | Funzioni di pianificazione e filtri in `services.py`, modelli del catalogo in `domain.py`. |
+| V1, §8.10.8 e capp. 10–11 — Composizione, moduli e package | `Downloader` usa il client HTTP e l'archivio SQLite come componenti. GUI e CLI richiamano gli stessi servizi. |
+| V1, cap. 9 — Eccezioni | `FadError` porta un codice ai chiamanti. Gli errori di SQLite e Requests vengono tradotti al confine del componente. |
+| V1, §12.5 e V2, §4.1.7 — Generatori e gestione dei file | Il trasferimento produce blocchi con `yield`. Risposte e file vengono chiusi tramite `with` e la scrittura viene confermata dopo le verifiche. |
+| V2, §§6.1.8 e 6.2 — Transazioni e SQLite | Il context manager conferma o annulla la transazione e chiude la connessione. La registrazione si affida al vincolo univoco sullo username. |
+| V2, §§7.3.5–7.3.6 — Eccezioni di rete e timeout | `HttpClient` applica un budget monotono alle richieste e alle attese. Il download ricontrolla la copia locale quando riceve HTTP 304. |
+| V2, §§8.4.0 e 9.4 — Thread ed eventi Tkinter | Il worker esegue il lavoro in background. `window.after` aggiorna i widget sul thread Tk leggendo una coda. |
+
 ## Struttura proposta
 
 ```text

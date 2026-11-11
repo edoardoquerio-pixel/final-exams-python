@@ -113,10 +113,13 @@ class SafeRoot:
     def fingerprint(self, relative: str) -> tuple[int, str] | None:
         try:
             with self.open_read(relative) as handle:
-                digest, size = hashlib.sha256(), 0
-                while chunk := handle.read(256 * 1024):
+                digest = hashlib.sha256()
+                size = 0
+                chunk = handle.read(256 * 1024)
+                while chunk:
                     digest.update(chunk)
                     size += len(chunk)
+                    chunk = handle.read(256 * 1024)
                 return size, digest.hexdigest()
         except FileNotFoundError:
             return None

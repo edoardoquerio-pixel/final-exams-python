@@ -50,6 +50,20 @@ def test_quiz_unknown_type_fails_closed():
         export_bundle(http, catalog().resources[2], lambda u, n: n)
 
 
+def test_html_attachment_body_uses_sanitizer_and_has_no_moodle_fallback():
+    from fad_downloader.domain import ORIGIN
+    http = DemoHttp()
+    resource = replace(catalog().resources[1], url=ORIGIN+'/pluginfile.php/1/mod_resource/content/1/lesson.html')
+    markup = b'<html><head><script>HEAD_SECRET</script></head><body><h1>Lesson body</h1><div class="resourcecontent">Inner part</div><script>BAD_SCRIPT</script><p onclick="bad()">Example</p><iframe src="https://evil.test"></iframe></body></html>'
+    http.document = lambda url: (markup, url)
+    html = export_bundle(http, resource, lambda u,n:n).decode()
+    assert 'Lesson body' in html and 'Example' in html and 'Inner part' in html
+    assert all(x not in html for x in ('HEAD_SECRET','BAD_SCRIPT','onclick','<iframe','evil.test'))
+    http.document = lambda url: (b'<html><body>Unrecognized Moodle layout</body></html>', url)
+    with pytest.raises(FadError, match='Contenuto HTML'):
+        export_bundle(http, replace(resource, url=ORIGIN+'/mod/page/view.php?id=1'), lambda u,n:n)
+
+
 def test_page_without_overflow_wrapper_exports_only_module_content():
     http = DemoHttp()
     http.document = lambda url: (

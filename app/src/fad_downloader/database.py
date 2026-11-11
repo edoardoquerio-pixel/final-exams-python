@@ -112,11 +112,13 @@ class Archive:
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA foreign_keys=ON")
             db.execute("PRAGMA busy_timeout=5000")
-            yield db
-            db.commit()
+            try:
+                yield db
+                db.commit()
+            finally:
+                if db.in_transaction:
+                    db.rollback()
         except sqlite3.Error:
-            if db:
-                db.rollback()
             raise FadError(
                 "DB", "Operazione SQLite non completata: controllare integrità, spazio e permessi."
             ) from None
@@ -140,12 +142,13 @@ class Archive:
         salt = secrets.token_bytes(16)
         digest = self._password(password, salt)
         with self.connect() as db:
-            if db.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
-                raise FadError("USER", "Nome utente DB già utilizzato.")
-            db.execute(
-                "INSERT INTO users(username,salt,password_hash,created) VALUES(?,?,?,?)",
+            inserted = db.execute(
+                "INSERT INTO users(username,salt,password_hash,created) VALUES(?,?,?,?) "
+                "ON CONFLICT(username) DO NOTHING",
                 (username, salt, digest, now()),
             )
+            if inserted.rowcount == 0:
+                raise FadError("USER", "Nome utente DB già utilizzato.")
 
     @monitored("db.user_login")
     def login(self, username, password):
@@ -153,7 +156,12 @@ class Archive:
         if len(password) > 1024:
             raise FadError("AUTH_REQUIRED", "Credenziali utente DB non valide.")
         with self.connect() as db:
-            user = db.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT id, username, salt, password_hash FROM users WHERE username=?",
+                (username,),
+            )
+            user = cursor.fetchone()
             digest = self._password(password, user["salt"] if user else b"\0" * 16)
             if not user or not hmac.compare_digest(digest, user["password_hash"]):
                 raise FadError("AUTH_REQUIRED", "Credenziali utente DB non valide.")
@@ -262,9 +270,12 @@ class Archive:
                             (uid, item["sha256"], item["size"]),
                         ).lastrowid
                     )
-                    digest, size, position = hashlib.sha256(), 0, 0
+                    digest = hashlib.sha256()
+                    size = 0
+                    position = 0
                     with root.open_read(item["path"]) as stream:
-                        while block := stream.read(1024 * 1024):
+                        block = stream.read(1024 * 1024)
+                        while block:
                             if cancel:
                                 check_cancel(cancel)
                             digest.update(block)
@@ -275,6 +286,7 @@ class Archive:
                                     (object_id, position, sqlite3.Binary(block)),
                                 )
                             position += 1
+                            block = stream.read(1024 * 1024)
                     if size != item["size"] or digest.hexdigest() != item["sha256"]:
                         raise FadError(
                             "CONFLICT",

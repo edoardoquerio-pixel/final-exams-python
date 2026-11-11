@@ -1,9 +1,9 @@
 # Piano di realizzazione - FAD Downloader
 
-Ultimo esito: [correzione delle omissioni sito → app](21_CORREZIONE_COMPLETEZZA.md).
+Ultimo esito: [check completo del 9 novembre](22_CHECK_COMPLETO_2026_11_09.md).
 
 **Per riprendere il lavoro leggere prima [00_CONTESTO_ATTUALE.md](00_CONTESTO_ATTUALE.md).**
-Raccoglie lo stato al 26 ottobre 2026, le istruzioni correnti dell'utente e le modifiche
+Raccoglie lo stato al 9 novembre 2026, le istruzioni correnti dell'utente e le modifiche
 ancora da verificare. Le sezioni iniziali di questo piano descrivono anche scelte storiche;
 non sono un invito a ricominciare l'applicazione da zero. L'upload è attualmente rimandato.
 

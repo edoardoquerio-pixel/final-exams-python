@@ -67,6 +67,69 @@ def test_login_html_is_not_authenticated():
         soup_document('<html><input name="logintoken" value="x"></html>', ORIGIN + "/my/")
 
 
+def test_unavailable_course_response_is_not_an_empty_resource():
+    markup = '<body id="page-mod-resource-view"><main id="region-main">Questo corso al momento non è disponibile agli studenti. Continua</main></body>'
+    with pytest.raises(FadError) as failure:
+        soup_document(markup, ORIGIN + '/mod/resource/view.php?id=1')
+    assert failure.value.code == 'COURSE_UNAVAILABLE'
+    assert soup_document(markup.replace('page-mod-resource-view', 'page-mod-quiz-review'), ORIGIN + '/mod/quiz/review.php?attempt=1')
+
+
+def test_scan_ignores_unavailable_course_links_but_keeps_other_errors():
+    from fad_downloader.domain import Limits
+
+    moodle = Moodle(Mock(cancel=Event(), limits=Limits()))
+    course = Course(1, "Course", ORIGIN + '/course/view.php?id=1')
+    blocked, denied, available = [
+        moodle.resource(course, mid, name, 'resource', ORIGIN + f'/mod/resource/view.php?id={mid}')
+        for mid, name in ((1, 'Unavailable'), (2, 'Other error'), (3, 'Available'))
+    ]
+    moodle.courses = Mock(return_value=[course])
+    moodle.activities = Mock(return_value=[blocked, denied, available])
+
+    def expand(_, resource):
+        if resource is blocked:
+            soup_document('<body id="page-mod-resource-view"><main id="region-main">Questo corso al momento non è disponibile agli studenti. Continua</main></body>', resource.url)
+        if resource is denied:
+            raise FadError('ACCESS_DENIED', 'Errore di accesso distinto.')
+        return [resource]
+
+    moodle.expand = expand
+    result = moodle.scan()
+    assert result.resources == [available]
+    assert len(result.warnings) == 1
+    assert 'Errore di accesso distinto.' in result.warnings[0]
+    assert 'Unavailable' not in result.warnings[0]
+
+
+def test_ignored_resource_is_reconsidered_on_the_next_scan():
+    from fad_downloader.domain import Limits
+
+    moodle = Moodle(Mock(cancel=Event(), limits=Limits()))
+    course = Course(1, "Course", ORIGIN + '/course/view.php?id=1')
+    resource = moodle.resource(course, 7, 'Material', 'resource', ORIGIN + '/mod/resource/view.php?id=7')
+    moodle.courses = Mock(return_value=[course])
+    moodle.activities = Mock(return_value=[resource])
+    moodle.expand = Mock(side_effect=[FadError('COURSE_UNAVAILABLE', 'Non disponibile.'), [resource]])
+    first = moodle.scan()
+    assert first.resources == [] and first.warnings == []
+    second = moodle.scan()
+    assert second.resources == [resource] and second.warnings == []
+
+
+def test_real_html_attachment_is_classified_for_passive_export():
+    from contextlib import nullcontext
+    moodle = Moodle(Mock(cancel=Event()))
+    course = Course(1, "C", ORIGIN + '/course/view.php?id=1')
+    resource = moodle.resource(course, 7, 'HTML lesson', 'resource', ORIGIN + '/mod/resource/view.php?id=7')
+    response = Mock(headers={'Content-Type':'text/html'}, url=ORIGIN+'/pluginfile.php/12/mod_resource/content/1/lesson.html')
+    moodle.http.request.return_value = nullcontext(response)
+    moodle.http.chunks.return_value = iter([b'<html><body><h1>Lesson</h1></body></html>'])
+    result = moodle.expand(course, resource)
+    assert len(result) == 1 and result[0].kind == 'page'
+    assert result[0].url == response.url and result[0].activity_id == 7
+
+
 def test_courses_pagination():
     moodle = Moodle(Mock(cancel=Event()))
     moodle.ajax = Mock(

@@ -1,5 +1,11 @@
 # Changelog
 
+## Revisione locale — 11 novembre 2026
+
+- Il budget HTTP si applica prima di ogni tentativo e durante le attese. Un `Retry-After` oltre il budget differisce la richiesta. Anche i flussi vuoti verificano annullamento e scadenza.
+- Dopo HTTP 304 viene verificata di nuovo la copia locale. Una modifica durante la richiesta viene segnalata come conflitto.
+- La registrazione SQLite gestisce atomicamente i nomi duplicati e il context manager esplicita commit e rollback.
+
 ## 0.2.0 — 15 ottobre 2026
 
 - Archivio SQLite con utenti applicativi ordinari, senza amministratore, separati dagli account FAD.

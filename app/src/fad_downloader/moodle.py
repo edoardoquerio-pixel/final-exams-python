@@ -29,6 +29,12 @@ def soup_document(content, url):
         raise FadError("AUTH_REQUIRED", "Sessione scaduta: accedere nuovamente e ritentare.")
     if soup.select_one('.errorbox, [data-rel="fatalerror"]'):
         raise FadError("ACCESS_DENIED", "Moodle ha restituito una pagina di errore.")
+    main = soup.select_one("#region-main")
+    if main and soup.body and soup.body.get("id") == "page-mod-resource-view":
+        message = " ".join(main.get_text(" ", strip=True).casefold().split())
+        if (message.startswith("questo corso al momento non")
+                and "disponibile agli studenti" in message and len(message) < 256):
+            raise FadError("COURSE_UNAVAILABLE", "Il corso collegato non è disponibile agli studenti.")
     return soup
 
 
@@ -525,6 +531,16 @@ class Moodle:
                     ]
                 raw = b"".join(self.http.chunks(response, 20 * 1024**2))
                 soup = soup_document(raw, response.url)
+                if urlsplit(response.url).path.startswith("/pluginfile.php/"):
+                    # A real HTML attachment must be exported passively, never
+                    # saved as executable original HTML or parsed as a Moodle view.
+                    return [replace(
+                        self.resource(course, resource.activity_id, resource.name,
+                                      "page", response.url, resource.section),
+                        activity_name=resource.activity_name or resource.name,
+                        section_index=resource.section_index,
+                        section_id=resource.section_id,
+                    )]
                 links = file_links(soup, response.url)
                 if not links:
                     self.warnings.append(f"{resource.name}: nessun allegato riconosciuto.")
@@ -590,6 +606,9 @@ class Moodle:
                     except FadError as exc:
                         if exc.code in {"CANCELLED", "AUTH_REQUIRED"}:
                             raise
+                        if exc.code == "COURSE_UNAVAILABLE":
+                            event("scan.resource_skipped", reason=exc.code)
+                            continue
                         self.warnings.append(f"{resource.name}: {exc}")
             except FadError as exc:
                 if exc.code in {"CANCELLED", "AUTH_REQUIRED"}:

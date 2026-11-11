@@ -1,6 +1,7 @@
 """Client HTTPS limitato alle operazioni Moodle di lettura."""
 
 import ipaddress
+import re
 import socket
 import time
 from threading import Event
@@ -188,7 +189,19 @@ class HttpClient:
     @monitored("network.request")
     def request(self, url, method="GET", allow_logout=False, **kwargs):
         start = time.monotonic()
+        deadline = start + self.limits.request_seconds
         redirects, retries = 0, 0
+
+        def remaining():
+            check_cancel(self.cancel)
+            budget = deadline - time.monotonic()
+            if budget <= 0:
+                raise FadError("LIMIT", "Tempo massimo della richiesta superato.")
+            return budget
+
+        def wait(delay):
+            self.cancel.wait(min(delay, remaining()))
+            remaining()
         if method == "POST" and urlsplit(url).path == "/lib/ajax/service.php":
             payload = kwargs.get("json", [])
             validate_ajax_payload(payload)
@@ -204,8 +217,8 @@ class HttpClient:
             )
             check_cancel(self.cancel)
             validate_url(url, method, allow_logout)
-            self.cancel.wait(max(0, 0.25 - (time.monotonic() - self.last_request)))
-            check_cancel(self.cancel)
+            wait(max(0, 0.25 - (time.monotonic() - self.last_request)))
+            timeout = min(self.limits.timeout, remaining())
             try:
                 self.last_request = time.monotonic()
                 response = self.session.request(
@@ -213,21 +226,24 @@ class HttpClient:
                     url,
                     allow_redirects=False,
                     stream=True,
-                    timeout=(self.limits.timeout, self.limits.timeout),
+                    timeout=(timeout, timeout),
                     **kwargs,
                 )
             except requests.RequestException as exc:
                 failure("network.connection_failed", exc)
+                remaining()
                 if method == "GET" and retries < 2:
                     retries += 1
-                    self.cancel.wait(retries)
+                    wait(retries)
                     continue
                 raise FadError(
                     "NETWORK", "Connessione fallita. Controllare rete e certificato HTTPS."
                 ) from None
-            if time.monotonic() - start > self.limits.request_seconds:
+            try:
+                remaining()
+            except FadError:
                 response.close()
-                raise FadError("LIMIT", "Tempo massimo della richiesta superato.")
+                raise
             event(
                 "network.response",
                 level=logging.DEBUG,
@@ -260,11 +276,15 @@ class HttpClient:
             ):
                 delay = response.headers.get("Retry-After", str(2**retries))
                 response.close()
-                if not delay.isdigit() or int(delay) > 30:
+                seconds = delay.strip()
+                if not re.fullmatch(r"0*[0-9]{1,2}", seconds):
+                    raise FadError("RATE_LIMITED", "Server occupato: riprovare più tardi.")
+                delay_seconds = int(seconds.lstrip("0") or "0")
+                if delay_seconds > 30 or delay_seconds >= remaining():
                     raise FadError("RATE_LIMITED", "Server occupato: riprovare più tardi.")
                 retries += 1
                 event("network.retry", attempt=retries + 1, http_status=response.status_code)
-                self.cancel.wait(int(delay))
+                wait(delay_seconds)
                 continue
             if response.status_code >= 400:
                 code = (
@@ -283,17 +303,23 @@ class HttpClient:
     def chunks(self, response, limit=None):
         limit = self.limits.file_bytes if limit is None else limit
         size = 0
+        def check_transfer():
+            check_cancel(self.cancel)
+            if time.monotonic() - response.fad_started >= self.limits.request_seconds:
+                raise FadError("LIMIT", "Tempo massimo del trasferimento superato.")
+
         try:
+            check_transfer()
             for chunk in response.iter_content(64 * 1024):
-                check_cancel(self.cancel)
-                if time.monotonic() - response.fad_started > self.limits.request_seconds:
-                    raise FadError("LIMIT", "Tempo massimo del trasferimento superato.")
+                check_transfer()
                 size += len(chunk)
                 if size > limit:
                     raise FadError("LIMIT", "Risposta oltre il limite consentito.")
                 if chunk:
                     yield chunk
+            check_transfer()
         except requests.RequestException:
+            check_transfer()
             raise FadError("NETWORK", "Trasferimento interrotto.") from None
         finally:
             event("network.stream_finished", level=logging.DEBUG, bytes=size)

@@ -157,3 +157,37 @@ def test_moodle_login_session_redirect_is_followed_without_password():
 def test_invalid_login_session_redirect_remains_blocked(query):
     with pytest.raises(FadError):
         validate_url(ORIGIN + "/login/index.php?" + query)
+
+def test_retry_after_beyond_remaining_budget_is_deferred():
+    from fad_downloader.domain import Limits
+
+    client = HttpClient(limits=Limits(request_seconds=5))
+    response = Mock(status_code=429, headers={"Retry-After": "30"})
+    client.session.request = Mock(return_value=response)
+    try:
+        with pytest.raises(FadError) as error:
+            client.request(ORIGIN + "/my/")
+        assert error.value.code == "RATE_LIMITED"
+        response.close.assert_called_once()
+        client.session.request.assert_called_once()
+        connect, read = client.session.request.call_args.kwargs["timeout"]
+        assert 0 < connect == read <= 5
+    finally:
+        client.close()
+
+
+def test_empty_transfer_checks_cancellation_at_end():
+    client = HttpClient()
+    response = Mock(fad_started=time.monotonic())
+
+    def empty_stream(_):
+        client.cancel.set()
+        yield from ()
+
+    response.iter_content.side_effect = empty_stream
+    try:
+        with pytest.raises(FadError) as error:
+            list(client.chunks(response))
+        assert error.value.code == "CANCELLED"
+    finally:
+        client.close()
